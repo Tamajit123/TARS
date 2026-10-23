@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "TARS",
+    "slug": "tars-ai",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/TARS-icon.png",
+    "scheme": "tarsai",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "bundleIdentifier": "app.tarsai.mobile"
+    },
+    "android": {
+      "package": "app.tarsai.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#11110F",
+        "foregroundImage": "./assets/TARS-icon.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/TARS-icon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#11110F",
+          "image": "./assets/TARS-icon.png",
+          "imageWidth": 180
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}
