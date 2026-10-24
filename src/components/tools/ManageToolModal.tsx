@@ -17,12 +17,11 @@ import {
   TouchableWithoutFeedback,
   ActivityIndicator,
   Platform,
+  Image,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { HugeiconsIcon } from '@hugeicons/react-native';
 import {
   Cancel01Icon,
-  CheckmarkCircle02Icon,
   Link02Icon,
   Logout01Icon,
   InformationCircleIcon,
@@ -71,7 +70,7 @@ export const ManageToolModal: React.FC<ManageToolModalProps> = ({
                       <Image
                         source={{ uri: imageUrl }}
                         style={styles.logoImage}
-                        contentFit="contain"
+                        resizeMode="contain"
                       />
                     ) : (
                       <Text style={styles.initialText}>

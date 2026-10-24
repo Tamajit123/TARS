@@ -14,8 +14,8 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
+  Image,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { HugeiconsIcon } from '@hugeicons/react-native';
 import { Settings02Icon } from '@hugeicons/core-free-icons';
 import { Colors } from '@/constants/colors';
@@ -60,8 +60,7 @@ export const ToolCard: React.FC<ToolCardProps> = ({
           <Image
             source={{ uri: imageUrl }}
             style={styles.logoImage}
-            contentFit="contain"
-            transition={200}
+            resizeMode="contain"
           />
         ) : (
           <View style={styles.initialFallback}>

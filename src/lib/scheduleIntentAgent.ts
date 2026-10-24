@@ -212,7 +212,7 @@ function normalizeDelivery(value: unknown, originalText: string) {
 
 function inferDeliveryFromPrompt(text: string) {
   const lower = text.toLowerCase();
-  const deliveryRules: Array<[RegExp, string]> = [
+  const deliveryRules: [RegExp, string][] = [
     [/\b(slack|channel)\b/, 'slack'],
     [/\b(email|mail|gmail|inbox)\b.*\b(me|to|send)|\b(email|mail|gmail)\s+me\b/, 'email'],
     [/\b(whatsapp|whats app)\b/, 'whatsapp'],

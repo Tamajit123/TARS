@@ -44,8 +44,7 @@ export const getUserToolConnections = async (
     .eq('user_id', userId);
 
   if (error) {
-    console.warn('[tools.ts] Error fetching user_tool_connections:', error.message);
-    return [];
+    throw error;
   }
 
   return (data as UserToolConnection[]) || [];
@@ -167,8 +166,7 @@ export const logToolRun = async (
   }
 
   if (!userId) {
-    console.warn('[tools.ts] Cannot log tool run: User ID is missing');
-    return null;
+    throw new Error('Cannot log tool run without an authenticated user.');
   }
 
   const payload = {
@@ -189,8 +187,7 @@ export const logToolRun = async (
     .single();
 
   if (error) {
-    console.error('[tools.ts] Error logging tool run to agent_tool_runs:', error.message);
-    return null;
+    throw error;
   }
 
   return data;

@@ -63,6 +63,14 @@ test('client Supabase configuration contains no server-only credentials', () => 
   assert.doesNotMatch(source, /SERVICE_ROLE_KEY|OPENAI_API_KEY|COMPOSIO_API_KEY|BROWSERBASE_API_KEY/);
 });
 
+test('Composio routes require a verified bearer token and server-only admin credentials', () => {
+  const backend = read('src/lib/composioBackend.ts');
+  assert.match(backend, /SUPABASE_SERVICE_ROLE_KEY/);
+  assert.doesNotMatch(backend, /EXPO_PUBLIC_SUPABASE_KEY|EXPO_PUBLIC_SUPABASE_URL|placeholder-key|placeholder\.supabase\.co/);
+  assert.match(backend, /auth\.getUser\(token\)/);
+  assert.doesNotMatch(backend, /return \{\s*userId:\s*bodyUserId/);
+});
+
 test('the app exposes Google OAuth only and protects signed-in routes', () => {
   const welcome = read('src/app/index.tsx');
   const callback = read('src/app/auth/callback.tsx');
