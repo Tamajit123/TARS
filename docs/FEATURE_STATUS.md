@@ -1,41 +1,46 @@
-# Feature status — October 23, 2026
+# Feature status — October 24, 2026
 
-## Implemented in source; not device-tested here
+## Implemented in source
 
-- Expo Router mobile shell with Chat, Activity, Ideas, Tasks, and Settings destinations.
-- TARS branding, provided artwork, graphite/amber design tokens, and safe-area-aware navigation.
-- Email OTP and Google OAuth flows using Supabase Auth.
-- AsyncStorage offline preview for conversation history, ideas, and task drafts.
-- Supabase chat history, ideas CRUD, activity read path, and RLS migration.
-- Authenticated, server-side AI request function with configurable model and server-only key.
-- Daily task creation, pause/resume, and an authenticated manual/cron runner path.
-- Privacy and terms screens describing current behavior.
-- EAS development, preview APK, and production profiles.
+- Expo Router shell with Chat, Activity, Ideas, Tasks, and Settings destinations; offline preview remains device-local.
+- Google-only sign-in UI using Supabase OAuth, persisted sessions, Google-identity verification, duplicate-tap protection, and a protected tabs layout. The offline preview remains a local-only option and is not an account method.
+- Display-name editing and private avatar upload through a signed-URL flow.
+- Chat Edge Function verifies the bearer session, confirms conversation ownership, persists user and assistant messages on the server, and uses request IDs to make retries idempotent.
+- Gemini is the chat provider; its key is read only by the `chat` Edge Function. There is no silent model fallback.
+- The Connections screen queries the authenticated `agent-run` function for real Composio account status. Connect/disconnect OAuth flows remain unavailable.
+- The task runner rejects client-selected external actions and saved schedules containing Browserbase/Composio payloads. Its existing chat-only scheduled AI behavior remains subject to deployment and provider configuration.
+- Additive Supabase migration repairs the visible legacy chat schema, installs owner policies, creates request recovery records and a private avatar bucket, and locks down the legacy `public."Users"` table without deleting its rows.
+- Security tests cover RLS ownership, service-side credentials, chat ownership/idempotency, and migration safeguards.
 
-## Implemented but unverified against real services/devices
+## Confirmed by local checks
 
-- Supabase login/session restoration, Postgres writes, RLS enforcement, Edge Function deploy, task execution, and activity feed.
-- EAS build profiles and icon assets.
-- Type checks, lint, static security tests, and platform exports are pending command execution.
+- `npm run typecheck` — passed.
+- `npm run lint` — passed.
+- `npm test` — 7 passed, including Google-only authentication and protected-route checks.
+- `npx expo config --type public` — passed; reports scheme `tarsai` and Expo SDK 58.
+- `npx expo export --platform all --max-workers 1` — blocked by Windows `EMFILE` (too many open files) while Metro crawled the icon dependency.
 
-## Requires external credentials or accounts
+These are source-level checks. They do not verify a deployed Edge Function, the remote database, Google OAuth provider configuration, or a physical device.
 
-- Cloud authentication, sync, and AI replies: Supabase project; AI replies also need an AI provider key.
-- Google login: Google OAuth client and Supabase provider setup.
-- Scheduled execution: deployed `agent-run`, server-side OpenAI key, and optionally pg_cron/pg_net/Vault.
-- iPhone standalone build: Expo account, Apple Developer membership, signing, and device provisioning for internal installs.
-- Android EAS build: Expo account; Play Store distribution additionally needs a Play Console account.
-- Integrations: Composio/Browserbase credentials and production hosting for trusted connector routes; not ready for public use.
+## Supabase schema evidence from the supplied screenshots
 
-## Requires paid service or account
+- `public."Users"` is marked RLS disabled and has a bigint ID plus a numeric token field. This is not a safe substitute for Supabase Auth's UUID identity. The migration preserves every row and denies Data API access until an explicit, verified mapping is designed.
+- The visible `chat_threads` table has UUID `id` and `user_id`, plus `title`, `created_at`, and `updated_at`; the app also needs `type` and `has_unread_updates`.
+- `chat_messages` is not among the visible tables. App history writes and the chat Edge Function require it.
+- The screenshot shows four policies on `chat_threads`, but not their expressions. The migration adds a restrictive owner guard so existing permissive policies cannot bypass ownership.
 
-- Apple Developer Program for signed physical-device internal distribution and App Store release.
-- AI provider usage may incur charges under that provider’s plan.
-- Supabase, Expo/EAS, Composio, Browserbase, and Google quotas/pricing depend on each account and can change; review their current plans before enabling them.
+This evidence explains the observed chat errors. It is not a live database inspection; the screenshots do not show every schema object or policy expression.
 
-## Not implemented
+## External setup still required
 
-- Light/system theme and persisted appearance selection.
-- Streaming chat, chat retry UI, chat rename/search/clear/export, user-facing goals, and task execution history details.
-- Full profile/preferences sync, account deletion/export, push notifications, billing/subscriptions, real activity summary generation, integration OAuth in native production, and analytics.
-- Live service verification, device end-to-end runs, native EAS builds, and production security review.
+- Review and apply `supabase/migrations/202610230002_auth_chat_recovery_storage.sql` to the intended Supabase project, then deploy the `chat` and `agent-run` functions and set server secrets. No remote change was made from this workspace.
+- Configure Google OAuth in Google Cloud and Supabase, allow the `tarsai://auth/callback` redirect, and disable Email/Phone providers in Supabase if Google-only account creation is required. See [Google-only Auth setup](SUPABASE_AUTH_SETUP.md).
+- Set `GEMINI_API_KEY` as a Supabase Edge Function secret. See [AI provider setup](AI_PROVIDER_SETUP.md).
+- Configure Composio server credentials if live connection status is needed. Status lookup does not enable external actions.
+- Run signed-in service checks on the target project and Expo Go/device checks after deployment.
+
+## Not implemented or not yet verified
+
+- Account deletion/export and persisted Light/System theme selection.
+- Chat streaming, search/rename/export, push notifications, billing, and native production OAuth connector flows.
+- Real Supabase migration execution, deployed function verification, Google OAuth provider callback verification on a device, and device end-to-end testing.

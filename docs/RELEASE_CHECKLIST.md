@@ -5,7 +5,7 @@
 - [ ] Add public Supabase variables to the intended EAS environment.
 - [ ] Link the Supabase project and apply `supabase/migrations`.
 - [ ] Deploy `chat` and set server-side provider secrets.
-- [ ] Verify email OTP and OAuth redirect settings.
+- [ ] Verify Google-only OAuth redirect settings and confirm Email/Phone Auth providers are disabled in Supabase.
 - [ ] Run `npm run typecheck`, `npm run lint`, `npm test`, and Android/iOS Expo exports.
 - [ ] Check two-account RLS isolation and failed/expired auth on real devices.
 - [ ] Register the iPhone UDID and create an ad hoc preview build.

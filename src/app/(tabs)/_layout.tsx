@@ -15,7 +15,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, Platform } from 'react-native';
+import { View, StyleSheet, Platform, ActivityIndicator } from 'react-native';
 import { Tabs, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { HugeiconsIcon } from '@hugeicons/react-native';
@@ -37,10 +37,41 @@ import { showToast } from '@/context/ToastContext';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
 
 const PROFILE_KEY = 'tars:agent-profile:v1';
+const OFFLINE_MODE_KEY = 'tars:offline-preview';
 type AgentProfile = { name: string; subtitle: string; icon: string; color: string };
 
 export default function TabLayout() {
   const router = useRouter();
+  const [accessState, setAccessState] = useState<'checking' | 'allowed'>('checking');
+
+  useEffect(() => {
+    let active = true;
+    const checkAccess = async (session: Awaited<ReturnType<typeof supabase.auth.getSession>>['data']['session']) => {
+      const offline = await AsyncStorage.getItem(OFFLINE_MODE_KEY);
+      if (!active) return;
+      const googleUser = session?.user.app_metadata?.provider === 'google' || session?.user.identities?.some((identity) => identity.provider === 'google') || false;
+      if (googleUser || (!session && offline === '1')) {
+        if (active) setAccessState('allowed');
+        return;
+      }
+      if (session) {
+        await AsyncStorage.removeItem(OFFLINE_MODE_KEY);
+        void supabase.auth.signOut();
+      }
+      if (active) {
+        setAccessState('checking');
+        router.replace('/');
+      }
+    };
+
+    void supabase.auth.getSession().then(({ data }) => checkAccess(data.session)).catch(() => {
+      if (active) router.replace('/');
+    });
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      void checkAccess(session);
+    });
+    return () => { active = false; authListener.subscription.unsubscribe(); };
+  }, [router]);
 
   // Agent mascot & profile state
   const [agentName, setAgentName] = useState('TARS');
@@ -72,6 +103,10 @@ export default function TabLayout() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const [isEditAgentOpen, setIsEditAgentOpen] = useState(false);
+
+  if (accessState === 'checking') {
+    return <View style={styles.accessLoading}><ActivityIndicator color={Colors.primary} /></View>;
+  }
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -242,6 +277,7 @@ export default function TabLayout() {
 }
 
 const styles = StyleSheet.create({
+  accessLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.background },
   safeArea: {
     flex: 1,
     backgroundColor: Colors.background,

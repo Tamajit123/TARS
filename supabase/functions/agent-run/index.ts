@@ -11,7 +11,7 @@ declare const Deno: {
 };
 
 type RequestBody = {
-  mode?: "run_due_schedules" | "run_scheduled_task";
+  mode?: "run_due_schedules" | "run_scheduled_task" | "list_connections";
   userId?: string;
   scheduledTaskId?: string;
   task?: string;
@@ -60,78 +60,17 @@ Deno.serve(async (req: Request) => {
       const result = await runScheduledTaskNow(supabase, user.id, body.scheduledTaskId);
       return json({ ok: true, ...result });
     }
-
-    const task = body.task || body.browserTask || body.composioText || "Scheduled TARS task";
-
-    const directComposioPlan =
-      body.composioToolSlug || body.composioToolkitSlug
-        ? null
-        : inferComposioPlanForDelivery({
-            delivery: body.delivery || inferDeliveryFromText(task) || "chat",
-            task,
-            payload: toJsonRecord(body),
-            aiText: body.composioText,
-          });
-    const composioToolSlug = body.composioToolSlug;
-    const composioToolkitSlug = body.composioToolkitSlug || directComposioPlan?.toolkitSlug;
-    const composioUseCase = body.composioUseCase || directComposioPlan?.useCase;
-    const composioText = body.composioText || directComposioPlan?.text;
-    const composioArguments = body.composioArguments || directComposioPlan?.arguments;
-    const composioAccounts = composioToolSlug || composioToolkitSlug ? await listComposioAccounts(user.id) : { items: [] };
-
-    const composioResult = composioToolSlug
-      ? await executeComposioTool({
-          toolSlug: composioToolSlug,
-          userId: user.id,
-          text: composioText,
-          args: composioArguments,
-          connectedAccounts: composioAccounts.items || [],
-        })
-      : composioToolkitSlug
-        ? await executeComposioAppUseCase({
-            toolkitSlug: composioToolkitSlug,
-            userId: user.id,
-            useCase: composioUseCase || composioText || task,
-            args: composioArguments,
-            connectedAccounts: composioAccounts.items || [],
-          })
-      : null;
-
-    const browserbaseRun = body.browserTask
-      ? await runBrowserbaseAgent({
-          task: body.browserTask,
-          poll: body.pollBrowserbase ?? true,
-        })
-      : null;
-
-    await supabase.from("agent_tool_runs").insert({
-      user_id: user.id,
-      action_name: "edge_agent_run",
-      input_summary: task,
-      output_summary: summarizeOutput({ composioResult, browserbaseRun }),
-      status: "completed",
-      metadata: {
-        composio_account_count: composioAccounts.items?.length || 0,
-        composio_tool_slug: composioToolSlug || null,
-        composio_toolkit_slug: composioToolkitSlug || null,
-        browserbase_run_id: browserbaseRun?.runId || null,
-        browserbase_status: browserbaseRun?.status || null,
-      },
-    });
-
-    return json({
-      ok: true,
-      userId: user.id,
-      composio: {
-        activeAccounts: sanitizeComposioAccounts(composioAccounts.items || []),
-        toolResult: composioResult,
-      },
-      browserbase: browserbaseRun,
-    });
+    if (body.mode === "list_connections") {
+      const accounts = await listComposioAccounts(user.id);
+      const items = Array.isArray(accounts.items) ? accounts.items.map(toJsonRecord) : [];
+      const providers = [...new Set(items.map(getAccountToolkitSlug).filter((slug): slug is string => Boolean(slug)))];
+      return json({ ok: true, providers });
+    }
+    return json({ ok: false, error: "unsupported_mode", message: "This action is not available until a confirmed tool authorization flow is configured." }, 400);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    console.error("[agent-run]", message);
-    return json({ ok: false, error: message }, 500);
+    console.error("[agent-run] Request failed", { message: message.slice(0, 240) });
+    return json({ ok: false, error: "agent_request_failed", message: "The task could not be completed. Check the task status and server configuration, then retry." }, 500);
   }
 });
 
@@ -398,6 +337,14 @@ async function runScheduledTaskNow(
 
 async function executeScheduledTask(schedule: JsonRecord) {
   const payload = toJsonRecord(schedule.task_payload);
+  const delivery = (getString(schedule.delivery) || "chat").toLowerCase();
+  const hasExternalAction = ["browser_task", "browserTask", "composio_tool_slug", "composioToolSlug", "composio_toolkit_slug", "composioToolkitSlug", "composio_arguments", "composioArguments"].some((key) => {
+    const value = payload[key];
+    return typeof value === "string" ? value.trim().length > 0 : value !== undefined && value !== null;
+  });
+  if (delivery !== "chat" || hasExternalAction) {
+    throw new Error("This saved task uses an external tool. Tool execution is unavailable until a confirmed authorization flow is configured.");
+  }
   const userId = getRequiredString(schedule, "user_id");
   const task = getFirstString(schedule, payload, [
     "task",
@@ -406,7 +353,7 @@ async function executeScheduledTask(schedule: JsonRecord) {
     "instruction",
     "description",
   ]);
-  const browserTask = getFirstString(schedule, payload, ["browser_task", "browserTask"]);
+  const browserTask = undefined;
   const composioToolSlug = getFirstString(schedule, payload, [
     "composio_tool_slug",
     "composioToolSlug",
@@ -426,7 +373,6 @@ async function executeScheduledTask(schedule: JsonRecord) {
   let composioText =
     getFirstString(schedule, payload, ["composio_text", "composioText"]) || task;
   const shouldUseOpenAi = getBoolean(schedule, payload, "use_openai", "useOpenAi") ?? true;
-  const delivery = (getString(schedule.delivery) || "chat").toLowerCase();
 
   if (!task && !browserTask && !composioToolSlug && !composioToolkitSlug) {
     throw new Error("Scheduled task is missing task, browser_task, composio_tool_slug, or composio_toolkit_slug.");
@@ -1001,13 +947,7 @@ async function runBrowserbaseAgent({
   }
 
   const completed = await pollBrowserbaseRun(String(run.runId));
-  const sessionId = completed.sessionId ? String(completed.sessionId) : "";
-  const liveView = sessionId ? await getBrowserbaseLiveView(sessionId) : null;
-
-  return {
-    ...completed,
-    liveViewUrl: liveView?.debuggerFullscreenUrl || liveView?.debuggerUrl || null,
-  };
+  return completed;
 }
 
 async function pollBrowserbaseRun(runId: string) {
@@ -1026,12 +966,6 @@ async function pollBrowserbaseRun(runId: string) {
   }
 
   return browserbaseFetch(`/v1/agents/runs/${encodeURIComponent(runId)}`, {
-    method: "GET",
-  });
-}
-
-async function getBrowserbaseLiveView(sessionId: string) {
-  return browserbaseFetch(`/v1/sessions/${encodeURIComponent(sessionId)}/debug?expiresIn=3600`, {
     method: "GET",
   });
 }

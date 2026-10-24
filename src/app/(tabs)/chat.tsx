@@ -1,7 +1,7 @@
 import { Colors } from '@/constants/colors';
 import { showToast } from '@/context/ToastContext';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
-import { CreateNewThread, getThread, LoadMessages, saveMessage } from '@/services/chatHistory';
+import { CreateNewThread, getThread, LoadMessages, saveMessage, shouldUseLocalChat } from '@/services/chatHistory';
 import { ChatMessage } from '@/types';
 import { SentIcon, Add01Icon } from '@hugeicons/core-free-icons';
 import { HugeiconsIcon } from '@hugeicons/react-native';
@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Keyboard, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableWithoutFeedback, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-type RequestMessage = { role: 'user' | 'assistant'; content: string };
+type PendingRequest = { conversationId: string; requestId: string; message: string; action: 'send' | 'persist-assistant'; output?: string };
 
 export default function ChatScreen() {
   const router = useRouter();
@@ -22,12 +22,14 @@ export default function ChatScreen() {
   const [threadId, setThreadId] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState('');
   const [userReady, setUserReady] = useState(!isSupabaseConfigured);
+  const [offlinePreview, setOfflinePreview] = useState(!isSupabaseConfigured);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
-  const [retryMessages, setRetryMessages] = useState<RequestMessage[] | null>(null);
-  const scrollRef = useRef<ScrollView>(null);
+  const [pendingRequest, setPendingRequest] = useState<PendingRequest | null>(null);
+  const sendingRef = useRef(false);
+  const scrollRef = useRef<any>(null);
   const headerOffset = Platform.OS === 'ios' ? insets.top + 92 : 0;
 
   useEffect(() => {
@@ -36,10 +38,12 @@ export default function ChatScreen() {
     supabase.auth.getSession().then(({ data }) => {
       if (!active) return;
       setUserEmail(data.session?.user.email || '');
+      void shouldUseLocalChat().then(setOfflinePreview);
       setUserReady(true);
     }).catch(() => { if (active) setUserReady(true); });
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUserEmail(session?.user.email || '');
+      if (session) setOfflinePreview(false);
     });
     return () => { active = false; listener.subscription.unsubscribe(); };
   }, []);
@@ -47,6 +51,7 @@ export default function ChatScreen() {
   const loadConversation = useCallback(async (refresh = false) => {
     if (!userReady) return;
     if (refresh) setRefreshing(true); else setLoading(true);
+    if (!refresh) { setThreadId(null); setMessages([]); }
     setError('');
     try {
       let thread = await getThread(routeThreadId || '', userEmail);
@@ -61,6 +66,8 @@ export default function ChatScreen() {
         timestamp: new Date(row.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
       })));
     } catch {
+      setThreadId(null);
+      setMessages([]);
       setError('Could not load this conversation. Check your connection and try again.');
     } finally { setLoading(false); setRefreshing(false); }
   }, [routeThreadId, userEmail, userReady]);
@@ -73,56 +80,85 @@ export default function ChatScreen() {
     return () => subscription.remove();
   }, []);
 
-  const requestReply = async (conversation: RequestMessage[]) => {
-    const { data, error: invokeError } = await supabase.functions.invoke('chat', { body: { messages: conversation } });
+  const invokePending = async (request: PendingRequest) => {
+    const { data, error: invokeError } = await supabase.functions.invoke('chat', {
+      body: { action: request.action, conversationId: request.conversationId, requestId: request.requestId, message: request.message, ...(request.output ? { output: request.output } : {}) },
+    });
     if (invokeError) throw invokeError;
-    if (typeof data?.output !== 'string' || !data.output.trim()) throw new Error('TARS could not produce a reply. Try again.');
-    return data.output.trim();
+    if (!data || typeof data !== 'object') throw new Error('Chat service returned an invalid response.');
+    return data as Record<string, any>;
   };
 
-  const saveAndAppendReply = async (conversation: RequestMessage[]) => {
+  const appendServerMessage = (item: any) => {
+    if (!item || typeof item.id !== 'string' || typeof item.content !== 'string') return;
+    setMessages((current) => current.some((message) => message.id === item.id) ? current : [...current, {
+      id: item.id,
+      sender: item.role === 'user' ? 'user' : 'agent',
+      text: item.content,
+      timestamp: new Date(item.created_at || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+    }]);
+  };
+
+  const performRequest = async (request: PendingRequest) => {
     try {
-      const answer = await requestReply(conversation);
-      if (!threadId) throw new Error('Conversation is not ready.');
-      const saved = await saveMessage(userEmail, threadId, 'assistant', answer, {});
-      setMessages((current) => [...current, { id: saved.id, sender: 'agent', text: answer, timestamp: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }]);
-      setRetryMessages(null);
-      setError('');
-    } catch {
-      setRetryMessages(conversation);
-      setError('TARS could not reply. Your message is saved; check the connection and retry.');
+      const data = await invokePending(request);
+      if (data.persisted === true) {
+        setMessages((current) => current.filter((message) => message.id !== `unsaved-${request.requestId}`));
+        appendServerMessage(data.userMessage);
+        appendServerMessage(data.assistantMessage);
+        setPendingRequest(null);
+        setError('');
+        setInputText((current) => current === request.message ? '' : current);
+      } else if (data.persisted === false && typeof data.output === 'string') {
+        appendServerMessage(data.userMessage);
+        setMessages((current) => current.some((message) => message.id === `unsaved-${request.requestId}`) ? current : [...current, {
+          id: `unsaved-${request.requestId}`, sender: 'agent', text: data.output,
+          timestamp: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+        }]);
+        setPendingRequest({ ...request, action: 'persist-assistant', output: data.output });
+        setError('TARS replied, but the reply is not saved yet. Retry saving it.');
+      } else if (data.persistedUserMessage) {
+        appendServerMessage(data.userMessage);
+        setPendingRequest(request);
+        setError(typeof data.message === 'string' ? data.message : 'Your message is saved, but TARS could not reply. Retry safely.');
+      } else {
+        throw new Error(typeof data.message === 'string' ? data.message : 'TARS could not finish that request. Your draft is still available.');
+      }
+    } catch (cause) {
+      setPendingRequest(request);
+      setError(cause instanceof Error ? cause.message : 'TARS could not finish that request. Retry safely.');
     }
   };
 
   const handleSend = async () => {
     const text = inputText.trim();
-    if (!text || sending) return;
+    if (!text || sendingRef.current || sending) return;
     if (text.length > 12000) { showToast('Keep a message under 12,000 characters.'); return; }
-    setSending(true);
+    sendingRef.current = true; setSending(true);
     setError('');
     try {
       if (!threadId) throw new Error('Conversation is still opening.');
-      const saved = await saveMessage(userEmail, threadId, 'user', text, {});
-      const message: ChatMessage = { id: saved.id, sender: 'user', text, timestamp: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) };
-      const history: RequestMessage[] = [...messages, message].map((item) => ({ role: item.sender === 'user' ? 'user' : 'assistant', content: item.text }));
-      setMessages((current) => [...current, message]);
-      setInputText('');
-      if (!isSupabaseConfigured) {
+      if (await shouldUseLocalChat()) {
+        const saved = await saveMessage(userEmail, threadId, 'user', text, {});
+        setMessages((current) => [...current, { id: saved.id, sender: 'user', text, timestamp: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }]);
+        setInputText('');
         showToast('Saved on this device. Add Supabase and AI settings to enable replies.');
         return;
       }
-      await saveAndAppendReply(history);
+      const request: PendingRequest = { conversationId: threadId, requestId: `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 14)}`, message: text, action: 'send' };
+      setInputText('');
+      await performRequest(request);
     } catch {
       setError('Your message could not be saved. Check the connection and try again.');
-    } finally { setSending(false); }
+    } finally { sendingRef.current = false; setSending(false); }
   };
 
   const retry = async () => {
-    if (!retryMessages || sending) return;
-    setSending(true);
+    if (!pendingRequest || sendingRef.current || sending) return;
+    sendingRef.current = true; setSending(true);
     setError('');
-    await saveAndAppendReply(retryMessages);
-    setSending(false);
+    try { await performRequest(pendingRequest); }
+    finally { sendingRef.current = false; setSending(false); }
   };
 
   const newConversation = async () => {
@@ -145,18 +181,18 @@ export default function ChatScreen() {
               <View style={styles.welcome}>
                 <View style={styles.signal}><View style={styles.signalDot} /></View>
                 <Text style={styles.welcomeTitle}>What’s on your mind?</Text>
-                <Text style={styles.welcomeCopy}>{isSupabaseConfigured ? 'Ask TARS to help you think, plan, or get a first draft moving.' : 'Your messages will stay on this device. Connect a backend to get AI replies.'}</Text>
+                <Text style={styles.welcomeCopy}>{!offlinePreview ? 'Ask TARS to help you think, plan, or get a first draft moving.' : 'Your messages will stay on this device. Connect an account to get AI replies.'}</Text>
                 <Pressable onPress={newConversation} style={styles.newChatButton} accessibilityRole="button"><HugeiconsIcon icon={Add01Icon} size={15} color={Colors.primaryLight} /><Text style={styles.newChatText}>Start another conversation</Text></Pressable>
               </View>
             ) : messages.map((message) => {
               const isUser = message.sender === 'user';
               return <View key={message.id} style={[styles.messageRow, isUser ? styles.userRow : styles.assistantRow]}><View style={[styles.bubble, isUser ? styles.userBubble : styles.assistantBubble]}><Text selectable style={[styles.messageText, isUser ? styles.userText : styles.assistantText]}>{message.text}</Text><Text style={[styles.time, isUser && styles.userTime]}>{message.timestamp}</Text></View></View>;
             })}
-            {error && messages.length > 0 ? <View style={styles.errorNotice}><Text style={styles.errorText}>{error}</Text>{retryMessages ? <Pressable onPress={retry} disabled={sending} accessibilityRole="button"><Text style={styles.retryText}>{sending ? 'Retrying…' : 'Retry'}</Text></Pressable> : null}</View> : null}
+            {error && messages.length > 0 ? <View style={styles.errorNotice}><Text style={styles.errorText}>{error}</Text>{pendingRequest ? <Pressable onPress={retry} disabled={sending} accessibilityRole="button"><Text style={styles.retryText}>{sending ? 'Retrying…' : pendingRequest.action === 'persist-assistant' ? 'Retry save' : 'Retry'}</Text></Pressable> : null}</View> : null}
             {sending ? <View style={styles.typing}><ActivityIndicator size="small" color={Colors.primary} /><Text style={styles.typingText}>TARS is thinking</Text></View> : null}
           </View></TouchableWithoutFeedback>
         </ScrollView>
-        <View style={styles.composerWrap}><View style={styles.composer}><TextInput value={inputText} onChangeText={setInputText} placeholder="Message TARS…" placeholderTextColor={Colors.textMuted} style={styles.input} multiline maxLength={12000} editable={!sending && !loading} onFocus={() => setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100)} accessibilityLabel="Message TARS" /><Pressable style={({ pressed }) => [styles.sendButton, pressed && styles.pressed, (!inputText.trim() || sending || loading) && styles.sendDisabled]} onPress={handleSend} disabled={!inputText.trim() || sending || loading} accessibilityRole="button" accessibilityLabel="Send message">{sending ? <ActivityIndicator size="small" color={Colors.background} /> : <HugeiconsIcon icon={SentIcon} size={18} color={Colors.background} strokeWidth={2} />}</Pressable></View><Text style={styles.composerNote}>{isSupabaseConfigured ? 'AI can make mistakes. Review important details.' : 'Offline preview · Stored on this device'}</Text></View>
+        <View style={styles.composerWrap}><View style={styles.composer}><TextInput value={inputText} onChangeText={setInputText} placeholder="Message TARS…" placeholderTextColor={Colors.textMuted} style={styles.input} multiline maxLength={12000} editable={!sending && !loading} onFocus={() => setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100)} accessibilityLabel="Message TARS" /><Pressable style={({ pressed }) => [styles.sendButton, pressed && styles.pressed, (!inputText.trim() || sending || loading) && styles.sendDisabled]} onPress={handleSend} disabled={!inputText.trim() || sending || loading} accessibilityRole="button" accessibilityLabel="Send message">{sending ? <ActivityIndicator size="small" color={Colors.background} /> : <HugeiconsIcon icon={SentIcon} size={18} color={Colors.background} strokeWidth={2} />}</Pressable></View><Text style={styles.composerNote}>{offlinePreview ? 'Offline preview · Stored on this device' : 'AI can make mistakes. Review important details.'}</Text></View>
       </View>
     </KeyboardAvoidingView>
   );

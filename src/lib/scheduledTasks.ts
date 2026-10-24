@@ -199,7 +199,7 @@ async function fetchScheduledTaskRunCount(taskId: string) {
     .filter('metadata->>scheduled_task_id', 'eq', taskId);
 
   if (error) {
-    return 0;
+    throw new Error(formatSupabaseError(error));
   }
 
   return count || 0;

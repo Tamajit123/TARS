@@ -117,21 +117,10 @@ export default function TasksScreen() {
     setRunningTaskId(task.id);
 
     try {
-      await runScheduledAgentTaskNow(task.id);
-      setTasks((prev) =>
-        prev.map((item) =>
-          item.id === task.id
-            ? {
-                ...item,
-                last_run_at: new Date().toISOString(),
-                last_run_status: 'completed',
-                runsCount: item.runsCount + 1,
-              }
-            : item
-        )
-      );
-      showToast(`${task.title} ran successfully`);
+      const result = await runScheduledAgentTaskNow(task.id);
+      if (result.status !== 'completed') throw new Error('The server did not confirm that the task completed.');
       await loadTasks(true);
+      showToast(`${task.title} ran successfully`);
     } catch (error) {
       console.error('Failed to run scheduled task:', error);
       showToast(getErrorMessage(error, 'Could not run scheduled goal'));

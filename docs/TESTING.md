@@ -18,9 +18,9 @@ npx expo export --platform ios
 | --- | --- |
 | Launch in offline preview | Available; device run still required |
 | Local ideas and task draft persistence | Implemented; device run still required |
-| Email OTP / Google sign-in | Implemented; requires Supabase and provider configuration |
+| Google-only sign-in | Implemented in source; requires Supabase/Google configuration and device callback verification |
 | Session restoration / sign-out | Implemented; requires a configured account to verify |
-| Chat AI reply | Edge Function implemented; requires OpenAI and Supabase credentials |
+| Chat AI reply | Gemini Edge Function implemented; requires Gemini and Supabase server configuration |
 | Provider failure | Generic error response implemented; live failure path unverified |
 | Cloud conversations / RLS isolation | Migration implemented; live two-account test required |
 | Activity feed | Reads persisted task-run records; requires a configured backend |

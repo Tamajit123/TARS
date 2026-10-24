@@ -31,7 +31,16 @@
           "image": "./assets/TARS-icon.png",
           "imageWidth": 180
         }
-      ]
+      ],
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow TARS to choose a profile photo."
+        }
+      ],
+      "expo-status-bar",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
