@@ -1,8 +1,14 @@
+-- Unapplied bootstrap: reconciles the three pre-existing tables without
+-- replacing their columns or rows. Live history was empty before this repair.
+begin;
+set local lock_timeout = '5s';
 create extension if not exists pgcrypto with schema extensions;
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
-  display_name text not null default '',
+  name text,
+  email text,
+  avatar_url text,
   agent_name text not null default 'TARS',
   agent_role text not null default 'Personal agent',
   agent_avatar text not null default 'tars',
@@ -11,6 +17,12 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+alter table public.profiles
+  add column if not exists agent_name text not null default 'TARS',
+  add column if not exists agent_role text not null default 'Personal agent',
+  add column if not exists agent_avatar text not null default 'tars',
+  add column if not exists agent_color text not null default '#E9A95F',
+  add column if not exists theme_preference text not null default 'dark' check (theme_preference in ('system', 'light', 'dark'));
 
 create table if not exists public.chat_threads (
   id uuid primary key default gen_random_uuid(),
@@ -19,9 +31,12 @@ create table if not exists public.chat_threads (
   title text not null default 'New conversation',
   has_unread_updates boolean not null default false,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (id, user_id)
+  updated_at timestamptz not null default now()
 );
+alter table public.chat_threads
+  add column if not exists type text not null default 'side',
+  add column if not exists has_unread_updates boolean not null default false;
+create unique index if not exists chat_threads_id_user_unique on public.chat_threads(id, user_id);
 create unique index if not exists chat_threads_one_main_per_user
   on public.chat_threads(user_id) where type = 'main';
 create index if not exists chat_threads_user_updated
@@ -37,6 +52,7 @@ create table if not exists public.chat_messages (
   created_at timestamptz not null default now(),
   constraint chat_messages_thread_user_fk foreign key (thread_id, user_id) references public.chat_threads(id, user_id) on delete cascade
 );
+alter table public.chat_messages add column if not exists metadata jsonb not null default '{}'::jsonb;
 create index if not exists chat_messages_thread_created
   on public.chat_messages(thread_id, created_at);
 
@@ -125,7 +141,7 @@ create table if not exists public.tools (
 );
 
 create or replace function public.touch_updated_at()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql set search_path = '' as $$
 begin new.updated_at = now(); return new; end;
 $$;
 
@@ -153,9 +169,14 @@ create policy messages_owner on public.chat_messages for all to authenticated us
 create policy ideas_owner on public.ideas for all to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 create policy scheduled_tasks_owner on public.scheduled_agent_tasks for all to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 create policy agent_runs_owner_select on public.agent_tool_runs for select to authenticated using ((select auth.uid()) = user_id);
-create policy connections_owner on public.user_tool_connections for all to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
+create policy connections_owner on public.user_tool_connections for select to authenticated using ((select auth.uid()) = user_id);
 create policy tools_read_enabled on public.tools for select to authenticated using (enabled);
 
-grant select, insert, update, delete on public.profiles, public.chat_threads, public.chat_messages, public.ideas, public.scheduled_agent_tasks, public.user_tool_connections to authenticated;
+revoke all on public.profiles, public.chat_threads, public.chat_messages, public.ideas, public.scheduled_agent_tasks, public.agent_tool_runs, public.user_tool_connections, public.tools from anon;
+revoke all on public.agent_tool_runs, public.user_tool_connections, public.tools from authenticated;
+grant select, insert, update, delete on public.profiles, public.chat_threads, public.chat_messages, public.ideas, public.scheduled_agent_tasks to authenticated;
 grant select on public.agent_tool_runs to authenticated;
+grant select on public.user_tool_connections to authenticated;
 grant select on public.tools to authenticated;
+grant all on public.profiles, public.chat_threads, public.chat_messages, public.ideas, public.scheduled_agent_tasks, public.agent_tool_runs, public.user_tool_connections, public.tools to service_role;
+commit;

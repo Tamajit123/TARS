@@ -1,162 +1,36 @@
-/**
- * Toast Context & Provider
- *
- * Provides a simple, universal, lightweight toast notification system
- * across iOS, Android, and Web without complex setup.
- */
-
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  Animated,
-  Platform,
-} from 'react-native';
-import { Colors } from '@/constants/colors';
-
-interface ToastContextType {
-  showToast: (message: string, duration?: number) => void;
-}
-
-const ToastContext = createContext<ToastContextType>({
-  showToast: () => {},
-});
-
-// Standalone global trigger support
+import { View, Text, StyleSheet } from 'react-native';
+import Animated, { cancelAnimation, Easing, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAppTheme } from '@/context/ThemeContext';
+import { useMotionPreferences } from '@/context/MotionContext';
+const ToastContext = createContext({ showToast: (_message: string, _duration?: number) => {} });
 let globalToastHandler: ((message: string, duration?: number) => void) | null = null;
-
-export const showToast = (message: string, duration?: number) => {
-  if (globalToastHandler) {
-    globalToastHandler(message, duration);
-  }
-};
-
+export const showToast = (message: string, duration?: number) => globalToastHandler?.(message, duration);
+const easing = Easing.bezier(0.23, 1, 0.32, 1);
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [toastMessage, setToastMessage] = useState<string>('');
-  const [visible, setVisible] = useState<boolean>(false);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const translateYAnim = useRef(new Animated.Value(-20)).current;
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const triggerToast = useCallback((message: string, duration = 2000) => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-
-    setToastMessage(message);
-    setVisible(true);
-
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 200,
-        useNativeDriver: true,
-      }),
-      Animated.spring(translateYAnim, {
-        toValue: 0,
-        friction: 8,
-        useNativeDriver: true,
-      }),
-    ]).start();
-
-    timeoutRef.current = setTimeout(() => {
-      Animated.parallel([
-        Animated.timing(fadeAnim, {
-          toValue: 0,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-        Animated.timing(translateYAnim, {
-          toValue: -15,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-      ]).start(() => {
-        setVisible(false);
-      });
-    }, duration);
-  }, [fadeAnim, translateYAnim]);
-
-  // Connect global handler
+  const { colors } = useAppTheme(); const { reducedMotion } = useMotionPreferences(); const insets = useSafeAreaInsets();
+  const [message, setMessage] = useState(''); const [visible, setVisible] = useState(false);
+  const opacity = useSharedValue(0), y = useSharedValue(-8);
+  const revision = useRef(0), timer = useRef<ReturnType<typeof setTimeout> | null>(null), hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const animated = useAnimatedStyle(() => ({ opacity: opacity.get(), transform: [{ translateY: y.get() }] }));
+  const triggerToast = useCallback((text: string, duration = 3500) => {
+    const current = ++revision.current;
+    if (timer.current) clearTimeout(timer.current); if (hideTimer.current) clearTimeout(hideTimer.current);
+    cancelAnimation(opacity); cancelAnimation(y); setMessage(text); setVisible(true);
+    opacity.set(withTiming(1, { duration: reducedMotion ? 120 : 250, easing }));
+    y.set(reducedMotion ? 0 : withTiming(0, { duration: 250, easing }));
+    timer.current = setTimeout(() => {
+      opacity.set(withTiming(0, { duration: 200, easing }));
+      y.set(reducedMotion ? 0 : withTiming(-8, { duration: 200, easing }));
+      hideTimer.current = setTimeout(() => { if (current === revision.current) setVisible(false); }, 200);
+    }, Math.max(duration, 2500));
+  }, [opacity, y, reducedMotion]);
   React.useEffect(() => {
     globalToastHandler = triggerToast;
-    return () => {
-      globalToastHandler = null;
-    };
+    return () => { globalToastHandler = null; if (timer.current) clearTimeout(timer.current); if (hideTimer.current) clearTimeout(hideTimer.current); };
   }, [triggerToast]);
-
-  return (
-    <ToastContext.Provider value={{ showToast: triggerToast }}>
-      {children}
-      {visible && (
-        <View pointerEvents="none" style={styles.toastWrapper}>
-          <Animated.View
-            style={[
-              styles.toastContainer,
-              {
-                opacity: fadeAnim,
-                transform: [{ translateY: translateYAnim }],
-              },
-            ]}>
-            <View style={styles.indicatorDot} />
-            <Text style={styles.toastText} numberOfLines={2}>
-              {toastMessage}
-            </Text>
-          </Animated.View>
-        </View>
-      )}
-    </ToastContext.Provider>
-  );
+  return <ToastContext.Provider value={{ showToast: triggerToast }}>{children}{visible ? <View pointerEvents="none" style={[styles.wrapper, { top: insets.top + 12 }]}><Animated.View accessibilityRole="alert" accessibilityLiveRegion="polite" style={[styles.toast, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }, animated]}><View style={[styles.dot, { backgroundColor: colors.success }]} /><Text style={{ color: colors.textPrimary, fontSize: 15, lineHeight: 21, flexShrink: 1 }}>{message}</Text></Animated.View></View> : null}</ToastContext.Provider>;
 };
-
 export const useToast = () => useContext(ToastContext);
-
-const styles = StyleSheet.create({
-  toastWrapper: {
-    position: 'absolute',
-    top: Platform.OS === 'ios' ? 56 : 36,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 99999,
-    elevation: 99999,
-  },
-  toastContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1E2022',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 24,
-    maxWidth: '85%',
-    gap: 8,
-    ...Platform.select({
-      ios: {
-        shadowColor: Colors.black,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
-        shadowRadius: 10,
-      },
-      android: {
-        elevation: 6,
-      },
-      web: {
-        boxShadow: '0 6px 20px rgba(0, 0, 0, 0.25)',
-      },
-    }),
-  },
-  indicatorDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-    backgroundColor: '#2563EB',
-  },
-  toastText: {
-    fontSize: 13.5,
-    fontWeight: '600',
-    color: Colors.white,
-    letterSpacing: -0.1,
-  },
-});
+const styles = StyleSheet.create({ wrapper: { position: 'absolute', left: 16, right: 16, alignItems: 'center', zIndex: 99999 }, toast: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 16, maxWidth: 440, gap: 10, borderWidth: StyleSheet.hairlineWidth }, dot: { width: 6, height: 6, borderRadius: 3 } });

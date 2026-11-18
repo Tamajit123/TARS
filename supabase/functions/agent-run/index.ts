@@ -1,1453 +1,201 @@
-// @ts-ignore Deno Edge supports npm: imports; the app TypeScript check does not.
-import { createClient } from "npm:@supabase/supabase-js@^2.109.0";
+import { refreshBrowserPreview } from '../_shared/browserPreview.ts';
+import {ownedReplyStatus} from '../_shared/replyStatus.ts';
+import {retrieveResearch,researchCapabilities} from '../_shared/researchProviders.ts';
+import {diagnoseProviders} from '../_shared/providerDiagnostics.ts';
+import {executeGoogleMaps} from '../_shared/googleMaps.ts';
+import {ensureMapsAuthConfig} from '../_shared/mapsSetup.ts';
+import { confirmAction } from '../_shared/confirmedActions.ts';
+import { createClient } from 'npm:@supabase/supabase-js@2.118.0';
+import { generateReply, getProviderHealth, ProviderError, providerMessage } from '../_shared/ai.ts';
+import { composioAPI, toolkitMetadata, ConnectionError, getConnectionHealth, handleConnectionRequest } from '../_shared/connections.ts';
+import { readPublicPage } from '../_shared/browser.ts';
+import { generateAgentReply } from '../_shared/agent.ts';
+import {classifyRequest} from '../_shared/universalAgent.ts';
+import { executeComposioRead } from '../_shared/composio.ts';
+import {executeDiscoveredRead,validatedToolArgs} from '../_shared/toolRegistry.ts';
 
-type JsonRecord = Record<string, unknown>;
+type JsonRecord = Record<string, any>;
+const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization,x-client-info,apikey,content-type', 'Access-Control-Allow-Methods': 'POST,OPTIONS' };
+class HttpError extends Error { constructor(readonly status: number, message: string) { super(message); } }
+const json = (body: JsonRecord, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+const mustGetEnv = (name: string) => { const value = Deno.env.get(name); if (!value) throw new HttpError(503, `${name} is not configured on the server.`); return value; };
+const createAdminClient = () => createClient(mustGetEnv('SUPABASE_URL'), mustGetEnv('SUPABASE_SERVICE_ROLE_KEY'), { auth: { persistSession: false, autoRefreshToken: false } });
+type AdminClient = ReturnType<typeof createAdminClient>;
 
-declare const Deno: {
-  serve: (handler: (req: Request) => Response | Promise<Response>) => void;
-  env: {
-    get: (name: string) => string | undefined;
-  };
-};
-
-type RequestBody = {
-  mode?: "run_due_schedules" | "run_scheduled_task" | "list_connections";
-  userId?: string;
-  scheduledTaskId?: string;
-  task?: string;
-  browserTask?: string;
-  composioToolSlug?: string;
-  composioToolkitSlug?: string;
-  composioUseCase?: string;
-  composioText?: string;
-  composioArguments?: JsonRecord;
-  delivery?: string;
-  pollBrowserbase?: boolean;
-};
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
-Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-
-  if (req.method !== "POST") {
-    return json({ error: "Method not allowed" }, 405);
-  }
-
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (req.method !== 'POST') return json({ ok: false, error: 'Use POST.' }, 405);
   try {
-    const body = (await req.json().catch(() => ({}))) as RequestBody;
+    const text = await req.text();
+    if (text.length > 16_000) throw new HttpError(413, 'Request too large.');
+    const body = JSON.parse(text);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'Use a JSON object.');
     const supabase = createAdminClient();
-
-    if (body.mode === "run_due_schedules") {
-      const authHeader = req.headers.get("authorization") || "";
-      const schedulerSecret = mustGetEnv("SCHEDULER_SECRET");
-      if (authHeader !== `Bearer ${schedulerSecret}`) {
-        return json({ error: "Unauthorized" }, 401);
+    // Maintenance probes use the same reviewed read pipeline as chat. They
+    // require the existing scheduler secret and cannot execute arbitrary tools.
+    if(body.mode==='read_only_diagnostic'){
+      if(req.headers.get('authorization')!==`Bearer ${mustGetEnv('SCHEDULER_SECRET')}`)throw new HttpError(401,'Unauthorized.');
+      if(typeof body.owner!=='string'||!/^[0-9a-f-]{36}$/i.test(body.owner))throw new HttpError(400,'Choose an existing owner.');
+      const {data:profile}=await supabase.from('profiles').select('id').eq('id',body.owner).single();
+      if(!profile)throw new HttpError(404,'Existing owner not found.');
+      const start=Date.now();
+      if(body.probe==='log'){
+        if(typeof body.logId!=='string'||!/^log_[\w-]{5,100}$/.test(body.logId))throw new HttpError(400,'Choose a valid log ID.');
+        const {data:owned}=await supabase.from('agent_tool_runs').select('id').eq('user_id',body.owner).eq('metadata->>logId',body.logId).limit(1).maybeSingle();
+        if(!owned)throw new HttpError(404,'Owned execution not found.');
+        const log=await composioAPI(`logs/tool_execution/${encodeURIComponent(body.logId)}`);
+        const errors:JsonRecord={};
+        const project=(value:unknown,path='',depth=0)=>{if(depth>9||!value||typeof value!=='object')return;for(const [key,item] of Object.entries(value)){if(/request|headers|token|secret|credential|authorization/i.test(key))continue;const next=`${path}.${key}`;if(/^(error|error_message|message|code|error_subcode|error_user_msg|error_user_title|status_code|type)$/.test(key)&&(typeof item==='string'||typeof item==='number'))errors[next]=typeof item==='number'?item:String(item).replace(/(?:Bearer\s+\S+|(?:access_token|refresh_token|api_key|client_secret)["'\s:=]+[^\s",}]+)/gi,'[redacted]').slice(0,600);else if(item&&typeof item==='object')project(item,next,depth+1);}};
+        project(log.data);return json({ok:true,logId:body.logId,status:log.status,dataKeys:Object.keys(log.data||{}),errors});
       }
-      const result = await runDueSchedules(supabase);
-      return json({ ok: true, ...result });
+      const extraReads:Record<string,{toolkit:string;args:JsonRecord}>={SLACK_LIST_ALL_CHANNELS:{toolkit:'slack',args:{limit:1,types:'public_channel'}},NOTION_SEARCH_NOTION_PAGE:{toolkit:'notion',args:{query:'',page_size:1}},INSTAGRAM_GET_USER_INFO:{toolkit:'instagram',args:{ig_user_id:'me',fields:'id,username'}}};
+      if(extraReads[body.tool]){
+        try{
+          const chosen=extraReads[body.tool],metadata=await composioAPI(`tools/${encodeURIComponent(body.tool)}`);
+          if(metadata.toolkit?.slug!==chosen.toolkit||!metadata.input_parameters)throw new HttpError(502,'The live read schema did not match the reviewed provider.');
+          const tool={name:body.tool,toolkit:chosen.toolkit,description:'Read-only release verification',parameters:metadata.input_parameters,requiresConfirmation:false};
+          const result=await executeDiscoveredRead(supabase,body.owner,tool,validatedToolArgs(tool,JSON.stringify(chosen.args)));
+          return json({ok:true,toolkit:chosen.toolkit,logId:result.logId,durationMs:Date.now()-start});
+        }catch(error){return json({ok:false,code:error instanceof ConnectionError?error.status:502,logId:error instanceof ConnectionError?error.requestId:undefined,error:error instanceof ConnectionError?error.message:'The reviewed read could not run.'});}
+      }
+      if(body.probe==='maps'){
+        const result=await executeGoogleMaps(supabase,body.owner,'maps_compute_route',{origin:'12.9170,77.6227',destination:'12.9569,77.7011',mode:'DRIVE'},undefined,undefined,req.signal,true);
+        return json({ok:result.ok,durationMs:Date.now()-start,...('error' in result?{error:result.error}:{route:result.result?.route})});
+      }
+      const result=await executeComposioRead(supabase,body.owner,body.tool,{});
+      return json({ok:result.ok,durationMs:Date.now()-start,toolkit:result.toolkit,logId:'logId' in result?result.logId:null,message:'message' in result?result.message:undefined,needsConnection:'needsConnection' in result?result.needsConnection:undefined});
     }
-
+    if(body.mode==='universal_health'){
+      if(req.headers.get('authorization')!==`Bearer ${mustGetEnv('SCHEDULER_SECRET')}`)throw new HttpError(401,'Unauthorized.');
+      if(typeof body.owner==='string'&&/^[0-9a-f-]{36}$/i.test(body.owner)){
+        const start=Date.now();let blocks:unknown,plan:unknown;const issues:string[]=[];try{const reply=await generateAgentReply([{role:'user',content:body.case==='laptop'?'Find two laptops under INR 80,000 from Indian retailers with native product cards, verified specifications and sourced listed prices.':'Compare Netflix, Spotify and YouTube Premium subscriptions in India using official sources.'}],supabase,body.owner,undefined,undefined,{onPresentationError:message=>{issues.push(message);},onPlan:value=>{plan=value;},onRichResponse:value=>{blocks=value.blocks.map(block=>({type:block.type,items:block.items?.length,rows:block.rows?.length}));}});return json({ok:true,characters:reply.length,blocks,plan,issues,durationMs:Date.now()-start});}catch(error){return json({ok:false,code:error instanceof ProviderError?error.code:'server_error',diagnostic:error instanceof ProviderError?error.diagnostic:{},issues,durationMs:Date.now()-start});}
+      }
+      const results=[];for(const query of ['Find the cheapest flight from BLR to CCU on 29 November 2026.','Research Browserbase using two reliable sources.']){const start=Date.now();try{results.push({ok:true,plan:await classifyRequest(query,''),durationMs:Date.now()-start});}catch(error){results.push({ok:false,code:error instanceof ProviderError?error.code:'invalid_plan',diagnostic:error instanceof ProviderError?error.diagnostic:undefined,message:error instanceof ProviderError?undefined:(error instanceof Error?error.message:'Invalid classification.'),durationMs:Date.now()-start});}}
+      return json({results});
+    }
+    if(body.mode==='research_health'){
+      if(req.headers.get('authorization')!==`Bearer ${mustGetEnv('SCHEDULER_SECRET')}`)throw new HttpError(401,'Unauthorized.');
+      const results=[];for(const action of ['search','fetch'] as const){try{const result=await retrieveResearch(action,action==='search'?'Browserbase official live view documentation':'https://example.com','research');results.push({action,ok:true,durationMs:result.durationMs,sources:result.sources.length,provider:result.provider});}catch(error){results.push({action,ok:false,error:error instanceof Error?error.message:'Research unavailable.'});}}
+      return json({capabilities:researchCapabilities(),results});
+    }
+    if(body.mode==='provider_diagnostics'){
+      if(req.headers.get('authorization')!==`Bearer ${mustGetEnv('SCHEDULER_SECRET')}`)throw new HttpError(401,'Unauthorized.');
+      const selected=['text','stream','multi_turn','long','structured','function_call'].includes(body.diagnosticCase)?body.diagnosticCase:undefined;
+      return json({ok:true,diagnostics:await diagnoseProviders(selected)});
+    }
+    if (body.mode === 'provider_health') {
+      if (req.headers.get('authorization') !== `Bearer ${mustGetEnv('SCHEDULER_SECRET')}`) throw new HttpError(401, 'Unauthorized.');
+      let probe;
+      let browserProbe;
+      let mapsProbe;
+      if (body.mapsProbe === true) {
+        try { const info=await toolkitMetadata('google_maps'); const tool=await composioAPI('tools/GOOGLE_MAPS_GET_ROUTE'); mapsProbe={ok:true,authConfigId:body.ensureMapsConfig===true?await ensureMapsAuthConfig():undefined,slug:info.slug,authSchemes:info.auth_schemes,managedAuthSchemes:info.composio_managed_auth_schemes,tool:{slug:tool.slug,description:tool.description,input:tool.input_parameters}}; }
+        catch(error){mapsProbe={ok:false,code:error instanceof ConnectionError?error.status:500};}
+      }
+      if (body.browserProbe === true) {
+        try {
+          let browserViewHttpStatus: number | null = null;
+          const milestones: string[] = [];
+          const page = await readPublicPage('https://example.com', async view => {
+            if (!view.liveUrl || !(Date.parse(view.expiresAt) > Date.now())) return;
+            const url = new URL(view.liveUrl);
+            if (url.protocol !== 'https:' || !/(^|\.)browserbase\.com$/.test(url.hostname) || url.username || url.password) return;
+            const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
+            browserViewHttpStatus = response.status;
+            await response.body?.cancel();
+          }, async activity => { milestones.push(activity); });
+          browserProbe = { ok: true, title: page.title, characters: page.text.length, milestones, browserViewHttpStatus };
+        }
+        catch (error) { browserProbe = { ok: false, message: error instanceof Error ? error.message : 'Browser probe failed.' }; }
+      }
+      if (body.probe === true) {
+        const model = typeof body.probeModel === 'string' && /^[a-z0-9][a-z0-9._-]{0,99}$/.test(body.probeModel) ? body.probeModel : undefined;
+        try { let chunks = 0; const prompt=[{role:'user' as const,content:body.streamProbe ? 'Write five short sentences about how an assistant can help plan a day. Do not use external tools.' : 'Reply with exactly OK.'}]; const onEvent=body.streamProbe ? (event: {type:string})=>{if(event.type==='text.delta')chunks++;} : undefined; const output=typeof body.agentProbeUserId==='string' && /^[0-9a-f-]{36}$/i.test(body.agentProbeUserId) ? await generateAgentReply(prompt,supabase,body.agentProbeUserId,undefined,undefined,{model,onEvent}) : await generateReply(prompt,false,model,onEvent); probe={ok:true,responseCharacters:output.length,streamedChunks:chunks}; }
+        catch (error) { probe = { ok: false, code: error instanceof ProviderError ? error.code : 'server_error', diagnostic: error instanceof ProviderError ? error.diagnostic : {} }; }
+      }
+      return json({ ok: true, gemini: await getProviderHealth(), probe, browserProbe, mapsProbe, composio: await getConnectionHealth(), browserbaseConfigured: Boolean(Deno.env.get('BROWSERBASE_API_KEY')) });
+    }
+    if (body.mode === 'run_due_schedules') {
+      const schedulerSecret = mustGetEnv("SCHEDULER_SECRET");
+      if (req.headers.get('authorization') !== `Bearer ${schedulerSecret}`) throw new HttpError(401, 'Unauthorized.');
+      const { data, error } = await supabase.rpc('claim_tars_agent_runs', { p_limit: 3 });
+      if (error) throw error;
+      const results = await Promise.all((data || []).map((reservation: JsonRecord) => runReservation(supabase, reservation)));
+      return json({ ok: true, processed: results.length, results });
+    }
     const user = await resolveUser(req, supabase);
-
-    if (body.mode === "run_scheduled_task") {
-      const result = await runScheduledTaskNow(supabase, user.id, body.scheduledTaskId);
-      return json({ ok: true, ...result });
+    if(body.mode==='reply_status')return json(await ownedReplyStatus(supabase,user.id,body.conversationId,body.requestId));
+    if(body.mode==='maps_request'){try{return json(await executeGoogleMaps(supabase,user.id,body.action,body.arguments||{},undefined,undefined,req.signal,true));}catch(error){return json({ok:false,error:error instanceof Error?error.message:'Maps unavailable.'},400);}}
+    if (body.mode === 'browser_preview') return json(await refreshBrowserPreview(supabase,user.id,body.runId));
+    if (['confirm_tool_action','cancel_tool_action'].includes(body.mode)) return json(await confirmAction(supabase, user.id, body.actionId, body.mode === 'cancel_tool_action'));
+    if (body.mode === 'read_integration') return json(await executeComposioRead(supabase, user.id, body.tool, body.arguments || {}));
+    if (['tools_catalog', 'tool_connect', 'tool_status', 'tool_disconnect'].includes(body.mode)) return json(await handleConnectionRequest(supabase, user.id, body));
+    if (body.mode === 'run_scheduled_task') {
+      if (typeof body.scheduledTaskId !== 'string' || !/^[0-9a-f-]{36}$/i.test(body.scheduledTaskId)) throw new HttpError(400, 'Choose a valid task.');
+      const { data, error } = await supabase.rpc('claim_tars_agent_runs', { p_task_id: body.scheduledTaskId, p_owner_id: user.id, p_limit: 1 });
+      if (error) throw error;
+      if (!data?.length) throw new HttpError(409, 'This task is unavailable or already running.');
+      const result = await runReservation(supabase, data[0]);
+      return json({ ...result, ok: result.status === 'completed' }, result.status === 'completed' ? 200 : 502);
     }
-    if (body.mode === "list_connections") {
-      const accounts = await listComposioAccounts(user.id);
-      const items = Array.isArray(accounts.items) ? accounts.items.map(toJsonRecord) : [];
-      const providers = [...new Set(items.map(getAccountToolkitSlug).filter((slug): slug is string => Boolean(slug)))];
+    if (body.mode === 'list_connections') {
+      const key = mustGetEnv('COMPOSIO_API_KEY');
+      const base = Deno.env.get('COMPOSIO_BASE_URL') || 'https://backend.composio.dev';
+      const url = new URL('/api/v3.1/connected_accounts', base);
+      url.searchParams.set('user_ids', user.id); url.searchParams.set('statuses', 'ACTIVE');
+      const response = await fetch(url, { headers: { 'x-api-key': key }, signal: AbortSignal.timeout(15_000) });
+      if (!response.ok) throw new HttpError(502, 'Connected accounts could not be verified.');
+      const accounts = await response.json();
+      const providers = [...new Set((accounts.items || []).map((account: JsonRecord) => account.toolkit?.slug || account.appName?.toLowerCase()).filter(Boolean))];
       return json({ ok: true, providers });
     }
-    return json({ ok: false, error: "unsupported_mode", message: "This action is not available until a confirmed tool authorization flow is configured." }, 400);
+    return json({ ok: false, error: 'unsupported_mode' }, 400);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    console.error("[agent-run] Request failed", { message: message.slice(0, 240) });
-    return json({ ok: false, error: "agent_request_failed", message: "The task could not be completed. Check the task status and server configuration, then retry." }, 500);
+    if (error instanceof HttpError || error instanceof ConnectionError) return json({ ok: false, message: error.message }, error.status);
+    if (error instanceof SyntaxError) return json({ ok: false, message: 'Invalid JSON request.' }, 400);
+    console.error('[agent-run] request failed', { code: error instanceof ProviderError ? error.code : 'server_error' });
+    return json({ ok: false, message: 'The task could not be completed. Check execution history and retry.' }, 500);
   }
 });
 
-async function runDueSchedules(supabase: ReturnType<typeof createAdminClient>) {
-  const now = new Date();
-  const { data: schedules, error } = await supabase
-    .from("scheduled_agent_tasks")
-    .select("*")
-    .eq("status", "active")
-    .lte("next_run_at", now.toISOString())
-    .order("next_run_at", { ascending: true })
-    .limit(25);
-
-  if (error) {
-    throw error;
-  }
-
-  const results = [];
-
-  for (const schedule of schedules || []) {
-    try {
-      const output = await executeScheduledTask(schedule);
-      const nextRunAt = calculateNextRunAt(schedule);
-      const nextStatus = nextRunAt ? "active" : "cancelled";
-      const outputSummary = summarizeOutput(output);
-      const resultText = getScheduledResultText(output);
-
-      const { error: runInsertError } = await supabase.from("agent_tool_runs").insert({
-        user_id: schedule.user_id,
-        action_name: getScheduleActionName(schedule),
-        input_summary: getScheduleInputSummary(schedule),
-        output_summary: outputSummary,
-        status: "completed",
-        metadata: {
-          scheduled_task_id: schedule.id,
-          task_type: schedule.task_type || null,
-          delivery: schedule.delivery,
-        },
-      });
-
-      if (runInsertError) {
-        throw runInsertError;
-      }
-
-      let chatMessageId: string | null = null;
-      let chatDeliveryError: string | null = null;
-
-      if (isChatDelivery(schedule)) {
-        try {
-          const chatMessage = await saveScheduledResultToChat(supabase, schedule, output);
-          chatMessageId = getString(chatMessage.id) || null;
-        } catch (chatError) {
-          chatDeliveryError = chatError instanceof Error ? chatError.message : "Unknown chat delivery error";
-          console.error("[agent-run] Failed to save scheduled result to chat", chatDeliveryError);
-        }
-      }
-
-      const updatePayload: JsonRecord = {
-        last_run_at: now.toISOString(),
-        last_run_status: "completed",
-        last_run_summary: resultText || outputSummary,
-        last_run_error: null,
-        status: nextStatus,
-      };
-
-      if (nextRunAt) {
-        updatePayload.next_run_at = nextRunAt;
-      }
-
-      const { error: updateError } = await supabase
-        .from("scheduled_agent_tasks")
-        .update(updatePayload)
-        .eq("id", schedule.id);
-
-      if (updateError) {
-        throw updateError;
-      }
-
-      results.push({ id: schedule.id, status: "completed" });
-      if (chatMessageId || chatDeliveryError) {
-        results[results.length - 1] = {
-          ...results[results.length - 1],
-          chatMessageId,
-          chatDeliveryError,
-        };
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown schedule error";
-
-      const { error: failedRunInsertError } = await supabase.from("agent_tool_runs").insert({
-        user_id: schedule.user_id,
-        action_name: getScheduleActionName(schedule),
-        input_summary: getScheduleInputSummary(schedule),
-        output_summary: null,
-        status: "failed",
-        error_message: message,
-        metadata: {
-          scheduled_task_id: schedule.id,
-          task_type: schedule.task_type || null,
-        },
-      });
-
-      if (failedRunInsertError) {
-        console.error("[agent-run] Failed to log failed scheduled task", failedRunInsertError);
-      }
-
-      if (isChatDelivery(schedule)) {
-        try {
-          await saveScheduledResultToChat(supabase, schedule, null, message);
-        } catch (chatError) {
-          console.error("[agent-run] Failed to save failed scheduled task to chat", chatError);
-        }
-      }
-
-      const { error: failedScheduleUpdateError } = await supabase
-        .from("scheduled_agent_tasks")
-        .update({
-          last_run_at: now.toISOString(),
-          last_run_status: "failed",
-          last_run_summary: null,
-          last_run_error: message,
-        })
-        .eq("id", schedule.id);
-
-      if (failedScheduleUpdateError) {
-        console.error("[agent-run] Failed to update failed scheduled task status", failedScheduleUpdateError);
-      }
-
-      results.push({ id: schedule.id, status: "failed", error: message });
-    }
-  }
-
-  return {
-    checkedAt: now.toISOString(),
-    dueCount: schedules?.length || 0,
-    results,
-  };
+async function resolveUser(req: Request, supabase: AdminClient) {
+  const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim();
+  if (!token) throw new HttpError(401, 'Sign in to run a task.');
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data.user) throw new HttpError(401, 'Your session expired. Sign in again.');
+  return data.user;
 }
 
-async function runScheduledTaskNow(
-  supabase: ReturnType<typeof createAdminClient>,
-  userId: string,
-  scheduledTaskId?: string,
-) {
-  if (!scheduledTaskId) {
-    throw new Error("scheduledTaskId is required.");
-  }
+async function executeScheduledTask(schedule: JsonRecord, supabase: AdminClient, runId: string) {
+  const payload = schedule.task_payload || {};
+  const delivery = schedule.delivery || 'chat';
+  const hasExternalAction = ['browser_task','browserTask','composio_tool_slug','composioToolSlug','composio_toolkit_slug','composioToolkitSlug','composio_arguments','composioArguments'].some((key) => payload[key] !== undefined && payload[key] !== null && payload[key] !== '');
+  if (delivery !== "chat" || hasExternalAction) throw new HttpError(422, 'This task requires external tool authorization. Its external actions were not executed.');
+  if (typeof schedule.original_prompt !== 'string' || !schedule.original_prompt.trim()) throw new HttpError(422, 'The saved task has no prompt.');
+  // Consume Gemini's streaming transport for cloud runs too. No UI events are
+  // forwarded, but the same tested incremental response parser is used.
+  return generateAgentReply([{ role: 'user', content: `Execute this saved task now and return the result: ${schedule.original_prompt.slice(0, 10_000)}` }], supabase, schedule.user_id, payload.sourceThreadId, `scheduled-${runId}`, { timezone: schedule.timezone || 'UTC',onEvent:()=>{} });
+}
 
-  const { data: schedule, error } = await supabase
-    .from("scheduled_agent_tasks")
-    .select("*")
-    .eq("id", scheduledTaskId)
-    .eq("user_id", userId)
-    .single();
-
-  if (error || !schedule) {
-    throw error || new Error("Scheduled task not found.");
-  }
-
-  const now = new Date();
-
+async function runReservation(supabase: AdminClient, reservation: JsonRecord) {
+  const { schedule, runId, leaseToken } = reservation;
+  let stage='inference';
   try {
-    const output = await executeScheduledTask(schedule);
-    const outputSummary = summarizeOutput(output);
-    const resultText = getScheduledResultText(output);
-
-    const { error: runInsertError } = await supabase.from("agent_tool_runs").insert({
-      user_id: schedule.user_id,
-      action_name: getScheduleActionName(schedule),
-      input_summary: getScheduleInputSummary(schedule),
-      output_summary: outputSummary,
-      status: "completed",
-      metadata: {
-        scheduled_task_id: schedule.id,
-        task_type: schedule.task_type || null,
-        delivery: schedule.delivery,
-        manual: true,
-      },
-    });
-
-    if (runInsertError) {
-      throw runInsertError;
-    }
-
-    let chatMessageId: string | null = null;
-    let chatDeliveryError: string | null = null;
-
-    if (isChatDelivery(schedule)) {
-      try {
-        const chatMessage = await saveScheduledResultToChat(supabase, schedule, output);
-        chatMessageId = getString(chatMessage.id) || null;
-      } catch (chatError) {
-        chatDeliveryError = chatError instanceof Error ? chatError.message : "Unknown chat delivery error";
-        console.error("[agent-run] Failed to save manual scheduled result to chat", chatDeliveryError);
-      }
-    }
-
-    const { error: updateError } = await supabase
-      .from("scheduled_agent_tasks")
-      .update({
-        last_run_at: now.toISOString(),
-        last_run_status: "completed",
-        last_run_summary: resultText || outputSummary,
-        last_run_error: null,
-      })
-      .eq("id", schedule.id);
-
-    if (updateError) {
-      throw updateError;
-    }
-
-    return {
-      id: schedule.id,
-      status: "completed",
-      chatMessageId,
-      chatDeliveryError,
-    };
+    const output = await executeScheduledTask(schedule, supabase, runId);
+    stage='persistence';
+    const { data, error } = await supabase.rpc('finish_tars_agent_run', { p_run_id: runId, p_lease_token: leaseToken, p_status: 'completed', p_output: output, p_message: output });
+    if (error) throw error;
+    return data;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown schedule error";
-
-    const { error: failedRunInsertError } = await supabase.from("agent_tool_runs").insert({
-      user_id: schedule.user_id,
-      action_name: getScheduleActionName(schedule),
-      input_summary: getScheduleInputSummary(schedule),
-      output_summary: null,
-      status: "failed",
-      error_message: message,
-      metadata: {
-        scheduled_task_id: schedule.id,
-        task_type: schedule.task_type || null,
-        manual: true,
-      },
-    });
-
-    if (failedRunInsertError) {
-      console.error("[agent-run] Failed to log failed manual scheduled task", failedRunInsertError);
-    }
-
-    const { error: failedUpdateError } = await supabase
-      .from("scheduled_agent_tasks")
-      .update({
-        last_run_at: now.toISOString(),
-        last_run_status: "failed",
-        last_run_summary: null,
-        last_run_error: message,
-      })
-      .eq("id", schedule.id);
-
-    if (failedUpdateError) {
-      console.error("[agent-run] Failed to update failed manual scheduled task", failedUpdateError);
-    }
-
-    if (isChatDelivery(schedule)) {
-      try {
-        await saveScheduledResultToChat(supabase, schedule, null, message);
-      } catch (chatError) {
-        console.error("[agent-run] Failed to save failed manual scheduled task to chat", chatError);
-      }
-    }
-
-    throw new Error(message);
+    const code = error instanceof ProviderError ? error.code : error instanceof HttpError ? 'task_configuration_error' : 'execution_or_persistence_failed';
+    console.error('[agent-run] scheduled execution failed', { runId, code, ...(error instanceof ProviderError ? error.diagnostic : {}) });
+    const previous = await supabase.from('agent_tool_runs').select('metadata').eq('id',runId).maybeSingle();
+    const safeError=error&&typeof error==='object'?error as JsonRecord:{};
+    const diagnostic=error instanceof ProviderError?error.diagnostic:{stage,code:typeof safeError.code==='string'&&/^[a-zA-Z0-9_-]{1,60}$/.test(safeError.code)?safeError.code:null,name:error instanceof Error?error.name:null};
+    await supabase.from('agent_tool_runs').update({metadata:{...(previous.data?.metadata || {}),failure_code:code,failure_diagnostic:diagnostic}}).eq('id',runId);
+    const message = error instanceof ProviderError ? providerMessage(error.code) : error instanceof HttpError ? error.message : 'Execution or result persistence failed. The server will retry due tasks up to three times.';
+    const { data, error: saveError } = await supabase.rpc('finish_tars_agent_run', { p_run_id: runId, p_lease_token: leaseToken, p_status: 'failed', p_error: message });
+    if (saveError) console.error('[agent-run] failure persistence failed', { runId, code: saveError.code });
+    return { ...(data || { id: schedule.id, status: 'failed', runId }), message };
   }
-}
-
-async function executeScheduledTask(schedule: JsonRecord) {
-  const payload = toJsonRecord(schedule.task_payload);
-  const delivery = (getString(schedule.delivery) || "chat").toLowerCase();
-  const hasExternalAction = ["browser_task", "browserTask", "composio_tool_slug", "composioToolSlug", "composio_toolkit_slug", "composioToolkitSlug", "composio_arguments", "composioArguments"].some((key) => {
-    const value = payload[key];
-    return typeof value === "string" ? value.trim().length > 0 : value !== undefined && value !== null;
-  });
-  if (delivery !== "chat" || hasExternalAction) {
-    throw new Error("This saved task uses an external tool. Tool execution is unavailable until a confirmed authorization flow is configured.");
-  }
-  const userId = getRequiredString(schedule, "user_id");
-  const task = getFirstString(schedule, payload, [
-    "task",
-    "original_prompt",
-    "prompt",
-    "instruction",
-    "description",
-  ]);
-  const browserTask = undefined;
-  const composioToolSlug = getFirstString(schedule, payload, [
-    "composio_tool_slug",
-    "composioToolSlug",
-  ]);
-  let composioToolkitSlug = getFirstString(schedule, payload, [
-    "composio_toolkit_slug",
-    "composioToolkitSlug",
-  ]);
-  let composioUseCase = getFirstString(schedule, payload, [
-    "composio_use_case",
-    "composioUseCase",
-  ]);
-  let composioArguments = getFirstRecord(schedule, payload, [
-    "composio_arguments",
-    "composioArguments",
-  ]);
-  let composioText =
-    getFirstString(schedule, payload, ["composio_text", "composioText"]) || task;
-  const shouldUseOpenAi = getBoolean(schedule, payload, "use_openai", "useOpenAi") ?? true;
-
-  if (!task && !browserTask && !composioToolSlug && !composioToolkitSlug) {
-    throw new Error("Scheduled task is missing task, browser_task, composio_tool_slug, or composio_toolkit_slug.");
-  }
-
-  const browserbaseRun = browserTask
-    ? await runBrowserbaseAgent({
-        task: browserTask,
-        poll: getBoolean(schedule, payload, "poll_browserbase", "pollBrowserbase") ?? true,
-      })
-    : null;
-
-  let aiDraft =
-    task && shouldUseOpenAi && shouldDraftWithOpenAiBeforeComposio(delivery, composioToolkitSlug, composioToolSlug)
-      ? await runOpenAiTask({
-          task,
-          title: getString(schedule.title),
-          delivery,
-          composioResult: null,
-          browserbaseRun,
-        })
-      : null;
-
-  if (!composioToolkitSlug && !composioToolSlug) {
-    const inferredPlan = inferComposioPlanForDelivery({
-      delivery,
-      task,
-      payload,
-      aiText: getString(toJsonRecord(aiDraft).outputText),
-    });
-
-    if (inferredPlan) {
-      composioToolkitSlug = inferredPlan.toolkitSlug;
-      composioUseCase = inferredPlan.useCase;
-      composioArguments = inferredPlan.arguments;
-      composioText = inferredPlan.text;
-    }
-  } else if (delivery === "slack") {
-    composioArguments = buildSlackMessageArguments({
-      task,
-      payload,
-      aiText: getString(toJsonRecord(aiDraft).outputText),
-      existingArguments: composioArguments,
-    });
-  }
-
-  const composioAccounts = composioToolkitSlug || composioToolSlug ? await listComposioAccounts(userId) : null;
-  assertConnectedToolkitAvailable(composioToolkitSlug || getToolkitSlugFromToolSlug(composioToolSlug || ""), composioAccounts?.items || []);
-  const composioResult = composioToolSlug
-    ? await executeComposioTool({
-        toolSlug: composioToolSlug,
-        userId,
-        text: composioText,
-        args: composioArguments,
-        connectedAccounts: composioAccounts?.items || [],
-      })
-    : composioToolkitSlug
-      ? await executeComposioAppUseCase({
-          toolkitSlug: composioToolkitSlug,
-          userId,
-          useCase: composioUseCase || composioText || task || `Run scheduled ${delivery} task.`,
-          args: composioArguments,
-          connectedAccounts: composioAccounts?.items || [],
-        })
-    : null;
-  const aiResult =
-    task && shouldUseOpenAi
-      ? await runOpenAiTask({
-          task,
-          title: getString(schedule.title),
-          delivery,
-          composioResult: toJsonRecord(composioResult),
-          browserbaseRun,
-        })
-      : aiDraft;
-
-  return {
-    type: "scheduled_user_task",
-    title: schedule.title,
-    delivery,
-    task,
-    composio: composioResult
-      ? {
-          activeAccounts: sanitizeComposioAccounts(composioAccounts?.items || []),
-          toolResult: composioResult,
-        }
-      : null,
-    browserbase: browserbaseRun,
-    ai: aiResult,
-  };
-}
-
-async function runOpenAiTask({
-  task,
-  title,
-  delivery,
-  composioResult,
-  browserbaseRun,
-}: {
-  task: string;
-  title?: string;
-  delivery?: string;
-  composioResult: JsonRecord | null;
-  browserbaseRun: JsonRecord | null;
-}) {
-  const apiKey = getEnv("OPENAI_API_KEY");
-
-  if (!apiKey) {
-    return {
-      skipped: true,
-      reason: "OPENAI_API_KEY is not configured.",
-    };
-  }
-
-  const systemPrompt = [
-    "You are TARS executing a saved scheduled task for the user.",
-    "Do the task now. Do not explain how to set it up, do not suggest cron jobs, scripts, webhooks, or future steps.",
-    "If the task asks for a message to be delivered externally, write only the message content that should be sent.",
-    "If a connected external tool is required and no tool result is provided, return a concise actionable failure instead of setup instructions.",
-    "Keep the result short, useful, and ready to show to the user.",
-  ].join(" ");
-
-  const input = [
-    title ? `Scheduled task title: ${title}` : null,
-    delivery ? `Delivery destination: ${delivery}` : null,
-    `User requested task: ${task}`,
-    composioResult ? `Connected tool result: ${JSON.stringify(composioResult)}` : null,
-    browserbaseRun ? `Browser task result: ${JSON.stringify(browserbaseRun)}` : null,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-
-  const model = getEnv("OPENAI_MODEL") || "gpt-4.1-mini";
-  let response: JsonRecord;
-
-  try {
-    response = await apiFetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        instructions: systemPrompt,
-        input,
-      }),
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!/unsupported.*message.*format|message.*format.*unsupported/i.test(message)) {
-      throw error;
-    }
-
-    response = await apiFetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          {
-            role: "system",
-            content: systemPrompt,
-          },
-          {
-            role: "user",
-            content: input,
-          },
-        ],
-      }),
-    });
-  }
-
-  return {
-    outputText: extractOpenAiOutputText(response) || extractChatCompletionOutputText(response),
-    response,
-  };
-}
-
-function calculateNextRunAt(schedule: JsonRecord) {
-  const scheduleType = String(schedule.schedule_type || "daily");
-  const previousRunAt = getString(schedule.next_run_at) || new Date().toISOString();
-  const next = new Date(previousRunAt);
-
-  if (scheduleType === "once") {
-    return null;
-  }
-
-  if (scheduleType === "interval") {
-    const intervalMinutes = Number(schedule.interval_minutes || 0);
-    if (Number.isFinite(intervalMinutes) && intervalMinutes > 0) {
-      return new Date(Date.now() + intervalMinutes * 60 * 1000).toISOString();
-    }
-  }
-
-  const rule = toJsonRecord(schedule.schedule_rule);
-  const frequency = String(rule.frequency || scheduleType || "daily");
-
-  if (frequency === "weekly") {
-    do {
-      next.setDate(next.getDate() + 7);
-    } while (next <= new Date());
-  } else {
-    do {
-      next.setDate(next.getDate() + 1);
-    } while (next <= new Date());
-  }
-
-  return next.toISOString();
-}
-
-function getScheduleActionName(schedule: JsonRecord) {
-  const taskType = getString(schedule.task_type) || "user_task";
-  return `scheduled_${taskType}`;
-}
-
-function getScheduleInputSummary(schedule: JsonRecord) {
-  return (
-    getString(schedule.task) ||
-    getString(schedule.original_prompt) ||
-    getString(schedule.prompt) ||
-    getString(schedule.browser_task) ||
-    getString(schedule.composio_text) ||
-    getString(schedule.title) ||
-    "Scheduled TARS task"
-  );
-}
-
-function isChatDelivery(schedule: JsonRecord) {
-  return (getString(schedule.delivery) || "chat").toLowerCase() === "chat";
-}
-
-async function saveScheduledResultToChat(
-  supabase: ReturnType<typeof createAdminClient>,
-  schedule: JsonRecord,
-  output: JsonRecord | null,
-  errorMessage?: string,
-) {
-  const userId = getRequiredString(schedule, "user_id");
-  const payload = toJsonRecord(schedule.task_payload);
-  const thread = await getScheduledResultThread(
-    supabase,
-    userId,
-    getString(payload.sourceThreadId) || getString(payload.source_thread_id),
-  );
-  const content = errorMessage
-    ? formatScheduledFailureMessage(schedule, errorMessage)
-    : formatScheduledSuccessMessage(schedule, output || {});
-  const metadata = {
-    type: "scheduled_task_result",
-    scheduledTaskId: schedule.id || null,
-    taskType: schedule.task_type || null,
-    delivery: schedule.delivery || "chat",
-    status: errorMessage ? "failed" : "completed",
-    output,
-    errorMessage: errorMessage || null,
-  };
-
-  const { data, error } = await supabase
-    .from("chat_messages")
-    .insert({
-      user_id: userId,
-      thread_id: thread.id,
-      role: "assistant",
-      content,
-      metadata,
-    })
-    .select()
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  await supabase
-    .from("chat_threads")
-    .update({
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", thread.id)
-    .eq("user_id", userId);
-
-  return data || {};
-}
-
-async function getScheduledResultThread(
-  supabase: ReturnType<typeof createAdminClient>,
-  userId: string,
-  sourceThreadId?: string,
-) {
-  if (sourceThreadId) {
-    const { data: sourceThread, error } = await supabase
-      .from("chat_threads")
-      .select("*")
-      .eq("id", sourceThreadId)
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-
-    if (sourceThread) {
-      return sourceThread;
-    }
-  }
-
-  return getOrCreateMainChatThread(supabase, userId);
-}
-
-async function getOrCreateMainChatThread(
-  supabase: ReturnType<typeof createAdminClient>,
-  userId: string,
-) {
-  const { data: existing, error: selectError } = await supabase
-    .from("chat_threads")
-    .select("*")
-    .eq("user_id", userId)
-    .eq("type", "main")
-    .maybeSingle();
-
-  if (selectError) {
-    throw selectError;
-  }
-
-  if (existing) {
-    return existing;
-  }
-
-  const { data, error } = await supabase
-    .from("chat_threads")
-    .insert({
-      user_id: userId,
-      type: "main",
-      title: "Main Chat",
-    })
-    .select()
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return data;
-}
-
-function formatScheduledSuccessMessage(schedule: JsonRecord, output: JsonRecord) {
-  const title = getString(schedule.title) || "Scheduled task";
-  const resultText = getScheduledResultText(output);
-
-  return [`Scheduled task complete: ${title}`, "", resultText].filter(Boolean).join("\n");
-}
-
-function formatScheduledFailureMessage(schedule: JsonRecord, errorMessage: string) {
-  const title = getString(schedule.title) || "Scheduled task";
-  return `Scheduled task failed: ${title}\n\n${errorMessage}`;
-}
-
-function getScheduledResultText(output: JsonRecord) {
-  const composio = toJsonRecord(output.composio);
-  const composioResult = toJsonRecord(composio.toolResult);
-  const composioSummary = getComposioResultSummary(composioResult);
-  if (composioSummary && (getString(output.delivery) || "chat").toLowerCase() !== "chat") {
-    return composioSummary;
-  }
-
-  const ai = toJsonRecord(output.ai);
-  const openAiText = getString(ai.outputText);
-  if (openAiText) {
-    return openAiText;
-  }
-
-  const message = getString(output.message);
-  if (message) {
-    return message;
-  }
-
-  const browserbase = toJsonRecord(output.browserbase);
-  const browserSummary = getString(browserbase.summary) || getString(browserbase.result);
-  if (browserSummary) {
-    return browserSummary;
-  }
-
-  if (composioSummary) {
-    return composioSummary;
-  }
-
-  return summarizeOutput(output);
-}
-
-function getComposioResultSummary(result: JsonRecord) {
-  return (
-    getString(result.summary) ||
-    getString(result.message) ||
-    getString(result.result) ||
-    getString(result.text) ||
-    getString(result.output)
-  );
-}
-
-function toJsonRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
-}
-
-function getRequiredString(record: JsonRecord, key: string) {
-  const value = getString(record[key]);
-  if (!value) {
-    throw new Error(`Scheduled task is missing ${key}.`);
-  }
-  return value;
-}
-
-function getFirstString(
-  schedule: JsonRecord,
-  payload: JsonRecord,
-  keys: string[],
-) {
-  for (const key of keys) {
-    const value = getString(schedule[key]) || getString(payload[key]);
-    if (value) {
-      return value;
-    }
-  }
-
-  return undefined;
-}
-
-function getFirstRecord(
-  schedule: JsonRecord,
-  payload: JsonRecord,
-  keys: string[],
-) {
-  for (const key of keys) {
-    const value = toJsonRecord(schedule[key]);
-    if (Object.keys(value).length > 0) {
-      return value;
-    }
-
-    const payloadValue = toJsonRecord(payload[key]);
-    if (Object.keys(payloadValue).length > 0) {
-      return payloadValue;
-    }
-  }
-
-  return undefined;
-}
-
-function getBoolean(
-  schedule: JsonRecord,
-  payload: JsonRecord,
-  snakeKey: string,
-  camelKey: string,
-) {
-  const rawValue = schedule[snakeKey] ?? schedule[camelKey] ?? payload[snakeKey] ?? payload[camelKey];
-
-  if (typeof rawValue === "boolean") {
-    return rawValue;
-  }
-
-  if (typeof rawValue === "string") {
-    if (rawValue.toLowerCase() === "true") {
-      return true;
-    }
-
-    if (rawValue.toLowerCase() === "false") {
-      return false;
-    }
-  }
-
-  return undefined;
-}
-
-function getString(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function createAdminClient() {
-  const supabaseUrl = mustGetEnv("SUPABASE_URL");
-  const serviceRoleKey = mustGetEnv("SUPABASE_SERVICE_ROLE_KEY");
-
-  return createClient(supabaseUrl, serviceRoleKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  });
-}
-
-async function resolveUser(
-  req: Request,
-  supabase: ReturnType<typeof createAdminClient>,
-) {
-  const authHeader = req.headers.get("authorization") || "";
-  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-
-  if (token) {
-    const { data, error } = await supabase.auth.getUser(token);
-    if (!error && data.user) {
-      return data.user;
-    }
-  }
-
-  throw new Error("Unauthorized: send a valid Supabase user JWT.");
-}
-
-async function listComposioAccounts(userId: string) {
-  const params = new URLSearchParams();
-  params.append("user_ids", userId);
-  params.append("statuses", "ACTIVE");
-
-  return composioFetch(`/api/v3.1/connected_accounts?${params.toString()}`, {
-    method: "GET",
-  });
-}
-
-async function executeComposioTool({
-  toolSlug,
-  userId,
-  text,
-  args,
-  connectedAccounts,
-}: {
-  toolSlug: string;
-  userId: string;
-  text?: string;
-  args?: JsonRecord;
-  connectedAccounts: JsonRecord[];
-}) {
-  const matchingAccount = connectedAccounts.find((account) => {
-    const toolkitSlug = getAccountToolkitSlug(account);
-    return toolkitSlug ? toolSlug.toLowerCase().startsWith(`${toolkitSlug}_`) : false;
-  });
-
-  const payload: JsonRecord = {
-    user_id: userId,
-    ...(matchingAccount?.id ? { connected_account_id: matchingAccount.id } : {}),
-    arguments: args || { text: text || "Run this tool for the scheduled task." },
-  };
-
-  return composioFetch(`/api/v3.1/tools/execute/${encodeURIComponent(toolSlug)}`, {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-async function runBrowserbaseAgent({
-  task,
-  poll,
-}: {
-  task: string;
-  poll: boolean;
-}) {
-  const run = await browserbaseFetch("/v1/agents/runs", {
-    method: "POST",
-    body: JSON.stringify({
-      task,
-      resultSchema: {
-        type: "object",
-        properties: {
-          summary: { type: "string" },
-          sourceUrl: { type: "string" },
-        },
-      },
-    }),
-  });
-
-  if (!poll || !run.runId) {
-    return run;
-  }
-
-  const completed = await pollBrowserbaseRun(String(run.runId));
-  return completed;
-}
-
-async function pollBrowserbaseRun(runId: string) {
-  const terminalStatuses = new Set(["COMPLETED", "FAILED", "STOPPED", "TIMED_OUT", "PAUSED"]);
-
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const run = await browserbaseFetch(`/v1/agents/runs/${encodeURIComponent(runId)}`, {
-      method: "GET",
-    });
-
-    if (terminalStatuses.has(String(run.status))) {
-      return run;
-    }
-
-    await sleep(1500);
-  }
-
-  return browserbaseFetch(`/v1/agents/runs/${encodeURIComponent(runId)}`, {
-    method: "GET",
-  });
-}
-
-async function composioFetch(path: string, init: RequestInit) {
-  const url = `${getEnv("COMPOSIO_BASE_URL") || "https://backend.composio.dev"}${path}`;
-
-  try {
-    return await apiFetch(url, {
-      ...init,
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": mustGetEnv("COMPOSIO_API_KEY"),
-        ...(init.headers || {}),
-      },
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (/access|permission|forbidden|unauthorized/i.test(message)) {
-      throw new Error(
-        `${message}. Check that the Supabase Edge Function COMPOSIO_API_KEY is a project API key with Composio connected-accounts read access and sessions/tool-router search + execute access.`,
-      );
-    }
-    throw error;
-  }
-}
-
-async function browserbaseFetch(path: string, init: RequestInit) {
-  return apiFetch(`https://api.browserbase.com${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      "X-BB-API-Key": mustGetEnv("BROWSERBASE_API_KEY"),
-      ...(init.headers || {}),
-    },
-  });
-}
-
-async function apiFetch(url: string, init: RequestInit) {
-  const response = await fetch(url, init);
-  const text = await response.text();
-  let data: unknown = {};
-
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = { message: text };
-    }
-  }
-
-  if (!response.ok) {
-    throw new Error(`${url} failed (${response.status}): ${JSON.stringify(data)}`);
-  }
-
-  return toJsonRecord(data);
-}
-
-function sanitizeComposioAccounts(accounts: JsonRecord[]) {
-  return accounts.map((account) => ({
-    id: account.id,
-    status: account.status,
-    toolkit: account.toolkit,
-    authConfig: account.auth_config || account.authConfig,
-    alias: account.alias,
-    userId: account.user_id || account.userId,
-  }));
-}
-
-function getAccountToolkitSlug(account: JsonRecord) {
-  return (
-    getString(toJsonRecord(account.toolkit).slug) ||
-    getString(account.toolkit_slug) ||
-    getString(account.toolkitSlug) ||
-    getString(toJsonRecord(account.auth_config || account.authConfig).toolkit_slug) ||
-    getString(toJsonRecord(account.auth_config || account.authConfig).toolkitSlug)
-  )?.toLowerCase();
-}
-
-function extractOpenAiOutputText(response: JsonRecord) {
-  const directOutput = getString(response.output_text);
-  if (directOutput) {
-    return directOutput;
-  }
-
-  const output = Array.isArray(response.output) ? response.output : [];
-  const textParts = output.flatMap((item) => {
-    const content = toJsonRecord(item).content;
-    if (!Array.isArray(content)) {
-      return [];
-    }
-
-    return content
-      .map((part) => {
-        const record = toJsonRecord(part);
-        return getString(record.text) || getString(record.output_text);
-      })
-      .filter(Boolean);
-  });
-
-  return textParts.join("\n").trim() || null;
-}
-
-function extractChatCompletionOutputText(response: JsonRecord) {
-  const choices = Array.isArray(response.choices) ? response.choices : [];
-  return choices
-    .map((choice) => getString(toJsonRecord(toJsonRecord(choice).message).content))
-    .filter(Boolean)
-    .join("\n")
-    .trim() || null;
-}
-
-function shouldDraftWithOpenAiBeforeComposio(
-  delivery: string,
-  toolkitSlug?: string,
-  toolSlug?: string,
-) {
-  const target = (toolkitSlug || getToolkitSlugFromToolSlug(toolSlug || "") || delivery).toLowerCase();
-  return ["slack", "gmail", "googlesheets", "googledocs", "notion"].includes(target);
-}
-
-function inferComposioPlanForDelivery({
-  delivery,
-  task,
-  payload,
-  aiText,
-}: {
-  delivery: string;
-  task?: string;
-  payload: JsonRecord;
-  aiText?: string;
-}) {
-  const toolkitSlug = getToolkitSlugForDelivery(delivery);
-
-  if (!toolkitSlug) {
-    return null;
-  }
-
-  if (toolkitSlug === "slack") {
-    const argumentsPayload = buildSlackMessageArguments({
-      task,
-      payload,
-      aiText,
-      existingArguments: getFirstRecord({}, payload, ["composio_arguments", "composioArguments"]),
-    });
-
-    return {
-      toolkitSlug,
-      useCase: "Send a message to a Slack channel",
-      text: argumentsPayload.text || task || "Send the scheduled Slack message.",
-      arguments: argumentsPayload,
-    };
-  }
-
-  return {
-    toolkitSlug,
-    useCase: getComposioUseCaseForDelivery(delivery, task),
-    text: aiText || task || `Run the scheduled ${delivery} task.`,
-    arguments: getFirstRecord({}, payload, ["composio_arguments", "composioArguments"]),
-  };
-}
-
-function getToolkitSlugForDelivery(delivery: string) {
-  const normalized = delivery.toLowerCase();
-  const deliveryToolkits: Record<string, string> = {
-    slack: "slack",
-    email: "gmail",
-    gmail: "gmail",
-    mail: "gmail",
-    calendar: "googlecalendar",
-    google_calendar: "googlecalendar",
-    notion: "notion",
-    teams: "microsoftteams",
-    discord: "discord",
-  };
-
-  return deliveryToolkits[normalized];
-}
-
-function inferDeliveryFromText(text?: string) {
-  if (!text) {
-    return undefined;
-  }
-
-  const deliveryRules: Array<[RegExp, string]> = [
-    [/\b(slack|channel)\b/, "slack"],
-    [/\b(email|mail|gmail|inbox)\b.*\b(me|to|send)|\b(email|mail|gmail)\s+me\b/, "email"],
-    [/\b(calendar|event|meeting)\b/, "calendar"],
-    [/\bnotion\b/, "notion"],
-    [/\b(teams|microsoft teams)\b/, "teams"],
-    [/\bdiscord\b/, "discord"],
-  ];
-
-  for (const [pattern, delivery] of deliveryRules) {
-    if (pattern.test(text.toLowerCase())) {
-      return delivery;
-    }
-  }
-
-  return undefined;
-}
-
-function getComposioUseCaseForDelivery(delivery: string, task?: string) {
-  const normalized = delivery.toLowerCase();
-  const useCases: Record<string, string> = {
-    email: "Send an email",
-    gmail: "Send an email",
-    mail: "Send an email",
-    calendar: "Create or update a calendar event",
-    google_calendar: "Create or update a calendar event",
-    notion: "Create or update a Notion page",
-    teams: "Send a Microsoft Teams message",
-    discord: "Send a Discord message",
-  };
-
-  return useCases[normalized] || task || `Run the scheduled ${formatDeliveryName(delivery)} task.`;
-}
-
-function buildSlackMessageArguments({
-  task,
-  payload,
-  aiText,
-  existingArguments,
-}: {
-  task?: string;
-  payload: JsonRecord;
-  aiText?: string;
-  existingArguments?: JsonRecord;
-}) {
-  const existing = existingArguments || {};
-  const channel =
-    getString(existing.channel) ||
-    getString(existing.channel_id) ||
-    getString(existing.channelId) ||
-    getString(payload.channel) ||
-    extractSlackChannel(task || "");
-  const text =
-    getString(existing.text) ||
-    getString(existing.message) ||
-    aiText ||
-    inferGreetingMessage(task || "") ||
-    task ||
-    "Good morning!";
-
-  return {
-    ...existing,
-    ...(channel ? { channel } : {}),
-    text,
-  };
-}
-
-function assertConnectedToolkitAvailable(toolkitSlug: string | undefined, connectedAccounts: JsonRecord[]) {
-  if (!toolkitSlug) {
-    return;
-  }
-
-  const hasMatchingAccount = connectedAccounts.some((account) => {
-    return getAccountToolkitSlug(account) === toolkitSlug;
-  });
-
-  if (!hasMatchingAccount) {
-    throw new Error(`Missing connected ${formatDeliveryName(toolkitSlug)} account. Connect ${formatDeliveryName(toolkitSlug)} before this scheduled task can run.`);
-  }
-}
-
-function getToolkitSlugFromToolSlug(toolSlug: string) {
-  const normalized = toolSlug.trim().toLowerCase();
-  const firstPart = normalized.split("_")[0];
-  return firstPart || undefined;
-}
-
-async function executeComposioAppUseCase({
-  toolkitSlug,
-  userId,
-  useCase,
-  args,
-  connectedAccounts,
-}: {
-  toolkitSlug: string;
-  userId: string;
-  useCase: string;
-  args?: JsonRecord;
-  connectedAccounts: JsonRecord[];
-}) {
-  assertConnectedToolkitAvailable(toolkitSlug, connectedAccounts);
-
-  const session = await createComposioToolRouterSession({
-    userId,
-    toolkitSlug,
-    connectedAccounts,
-  });
-  const sessionId = getRequiredResponseString(session, "session_id", "Composio session");
-  const search = await searchComposioSessionTools({
-    sessionId,
-    useCase,
-    args,
-  });
-  const toolSlug = getFirstComposioSearchToolSlug(search);
-
-  if (!toolSlug) {
-    throw new Error(`Composio could not find a ${formatDeliveryName(toolkitSlug)} tool for: ${useCase}`);
-  }
-
-  return executeComposioSessionTool({
-    sessionId,
-    toolSlug,
-    args,
-  });
-}
-
-async function createComposioToolRouterSession({
-  userId,
-  toolkitSlug,
-  connectedAccounts,
-}: {
-  userId: string;
-  toolkitSlug: string;
-  connectedAccounts: JsonRecord[];
-}) {
-  const connectedAccountIds = connectedAccounts
-    .filter((account) => getAccountToolkitSlug(account) === toolkitSlug)
-    .map((account) => getString(account.id))
-    .filter(Boolean);
-
-  return composioFetch("/api/v3.1/tool_router/session", {
-    method: "POST",
-    body: JSON.stringify({
-      user_id: userId,
-      toolkits: { enable: [toolkitSlug] },
-      ...(connectedAccountIds.length > 0
-        ? { connected_accounts: { [toolkitSlug]: connectedAccountIds } }
-        : {}),
-      multi_account: {
-        enable: true,
-        max_accounts_per_toolkit: 5,
-        require_explicit_selection: false,
-      },
-      manage_connections: {
-        enable: true,
-      },
-    }),
-  });
-}
-
-async function searchComposioSessionTools({
-  sessionId,
-  useCase,
-  args,
-}: {
-  sessionId: string;
-  useCase: string;
-  args?: JsonRecord;
-}) {
-  return composioFetch(`/api/v3.1/tool_router/session/${encodeURIComponent(sessionId)}/search`, {
-    method: "POST",
-    body: JSON.stringify({
-      queries: [
-        {
-          use_case: useCase.slice(0, 1024),
-          ...(args && Object.keys(args).length > 0
-            ? { known_fields: formatKnownFields(args).slice(0, 500) }
-            : {}),
-        },
-      ],
-    }),
-  });
-}
-
-async function executeComposioSessionTool({
-  sessionId,
-  toolSlug,
-  args,
-}: {
-  sessionId: string;
-  toolSlug: string;
-  args?: JsonRecord;
-}) {
-  return composioFetch(`/api/v3.1/tool_router/session/${encodeURIComponent(sessionId)}/execute`, {
-    method: "POST",
-    body: JSON.stringify({
-      tool_slug: toolSlug,
-      arguments: args || {},
-    }),
-  });
-}
-
-function getFirstComposioSearchToolSlug(search: JsonRecord) {
-  const results = Array.isArray(search.results) ? search.results : [];
-  for (const result of results) {
-    const record = toJsonRecord(result);
-    const rawSlugs = record.primary_tool_slugs || record.primaryToolSlugs;
-    if (!Array.isArray(rawSlugs)) {
-      continue;
-    }
-
-    const slug = rawSlugs.map(getString).find(Boolean);
-    if (slug) {
-      return slug;
-    }
-  }
-
-  const schemas = toJsonRecord(search.tool_schemas);
-  const firstSchemaSlug = Object.keys(schemas)[0];
-  if (firstSchemaSlug) {
-    return firstSchemaSlug;
-  }
-
-  const camelSchemas = toJsonRecord(search.toolSchemas);
-  return Object.keys(camelSchemas)[0];
-}
-
-function getRequiredResponseString(record: JsonRecord, key: string, label: string) {
-  const value = getString(record[key]);
-  if (!value) {
-    throw new Error(`${label} response is missing ${key}.`);
-  }
-  return value;
-}
-
-function formatKnownFields(args: JsonRecord) {
-  return Object.entries(args)
-    .map(([key, value]) => `${key}:${typeof value === "string" ? value : JSON.stringify(value)}`)
-    .join(", ");
-}
-
-function extractSlackChannel(text: string) {
-  const hashMatch = text.match(/#[A-Za-z0-9_-]+/);
-  if (hashMatch?.[0]) {
-    return hashMatch[0];
-  }
-
-  const channelMatch = text.match(/\bchannel\s+([A-Za-z0-9_-]+)/i);
-  if (channelMatch?.[1]) {
-    return `#${channelMatch[1].replace(/^#/, "")}`;
-  }
-
-  return undefined;
-}
-
-function inferGreetingMessage(task: string) {
-  if (!/\bgreeting\b|\bgood\s+morning\b|\bmorning\b/i.test(task)) {
-    return undefined;
-  }
-
-  return "Good morning! Hope you have a great day.";
-}
-
-function formatDeliveryName(value: string) {
-  return value
-    .split(/[_-]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ") || "tool";
-}
-
-function summarizeOutput(output: JsonRecord) {
-  const summary = JSON.stringify(output);
-  return summary.length > 1000 ? `${summary.slice(0, 1000)}...` : summary;
-}
-
-function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      ...corsHeaders,
-      "Content-Type": "application/json",
-    },
-  });
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function mustGetEnv(name: string) {
-  const value = getEnv(name);
-  if (!value) {
-    throw new Error(`${name} is missing`);
-  }
-  return value;
-}
-
-function getEnv(name: string) {
-  return Deno.env.get(name)?.trim();
 }

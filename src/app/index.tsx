@@ -1,13 +1,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Colors } from '@/constants/colors';
+import { useAppTheme } from '@/context/ThemeContext';
+import type { ColorPalette } from '@/constants/colors';
+
 import { provisionProfile } from '@/lib/auth';
+import {restoreDestination} from '@/services/navigationState';
 import { completeAuthRedirect } from '@/lib/authRedirect';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
 import { useRouter } from 'expo-router';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -29,6 +32,8 @@ function authErrorMessage(error: unknown) {
 }
 
 export default function WelcomeScreen() {
+  const { colors: Colors, resolved } = useAppTheme();
+  const styles = createStyles(Colors);
   const router = useRouter();
   const busyRef = useRef(false);
   const [loading, setLoading] = useState(true);
@@ -44,7 +49,8 @@ export default function WelcomeScreen() {
           try { await provisionProfile(user.id, user.user_metadata?.display_name || ''); }
           catch (cause) { console.warn('[auth] profile provisioning will retry after session restore', cause instanceof Error ? cause.name : 'unknown'); }
           await AsyncStorage.removeItem(OFFLINE_MODE_KEY);
-          router.replace('/(tabs)/chat');
+          const destination=await restoreDestination(user.id);
+          if(active)router.replace(destination);
         } else if (active && user) {
           await supabase.auth.signOut();
           await AsyncStorage.removeItem(OFFLINE_MODE_KEY);
@@ -67,10 +73,14 @@ export default function WelcomeScreen() {
       const redirectTo = Linking.createURL('auth/callback');
       const { data, error: oauthError } = await supabase.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo, skipBrowserRedirect: true, queryParams: { prompt: 'select_account' } },
+        options: { redirectTo, skipBrowserRedirect: Platform.OS !== 'web', queryParams: { prompt: 'select_account' } },
       });
       if (oauthError) throw oauthError;
       if (!data.url) throw new Error('Google sign-in did not return an authorization URL.');
+      // Browsers use Supabase's same-tab redirect. A popup can remain pending
+      // indefinitely in embedded browsers without a usable window handle.
+      // Native apps still need Expo's system authentication session below.
+      if (Platform.OS === 'web') return;
       const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
       if (result.type === 'cancel' || result.type === 'dismiss') return;
       if (result.type !== 'success') throw new Error('Google sign-in did not complete.');
@@ -81,7 +91,7 @@ export default function WelcomeScreen() {
       }
       await provisionProfile(session.user.id, session.user.user_metadata?.full_name || session.user.user_metadata?.name || '');
       await AsyncStorage.removeItem(OFFLINE_MODE_KEY);
-      router.replace('/(tabs)/chat');
+      router.replace(await restoreDestination(session.user.id));
     } catch (cause) {
       setError(authErrorMessage(cause));
     } finally {
@@ -100,9 +110,9 @@ export default function WelcomeScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.topline}><View style={styles.dot} /><Text style={styles.kicker}>PERSONAL INTELLIGENCE</Text></View>
         <View style={styles.hero}>
-          <View style={styles.markFrame}><Image source={require('../../TARS.png')} style={styles.mark} resizeMode="contain" accessibilityLabel="TARS mark" /></View>
+          <View style={styles.markFrame}><Image source={resolved === 'dark' ? require('../../assets/icons/tars-dark.png') : require('../../assets/icons/tars-light.png')} style={styles.mark} resizeMode="contain" accessibilityLabel="TARS mark" /></View>
           <Text style={styles.title}>TARS</Text>
-          <Text style={styles.tagline}>A calmer way to move things forward.</Text>
+          <Text style={styles.tagline}>Email, plans, and the web. One conversation.</Text>
         </View>
         <View style={styles.actions}>
           {loading ? <ActivityIndicator color={Colors.primary} /> : <Pressable style={[styles.googleButton, busy && styles.disabled]} onPress={() => void googleSignIn()} disabled={busy} accessibilityRole="button">
@@ -118,12 +128,12 @@ export default function WelcomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ColorPalette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   content: { flexGrow: 1, width: '100%', maxWidth: 460, alignSelf: 'center', paddingHorizontal: 26, paddingTop: 16, paddingBottom: 22, justifyContent: 'space-between' },
   topline: { flexDirection: 'row', alignItems: 'center', gap: 9 },
   dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.primary },
-  kicker: { color: Colors.textMuted, fontSize: 10, fontWeight: '700', letterSpacing: 2.1 },
+  kicker: { color: Colors.textMuted, fontSize: 11, fontWeight: '700', letterSpacing: 2.1 },
   hero: { minHeight: 300, alignItems: 'center', justifyContent: 'center' },
   markFrame: { width: 116, height: 116, borderRadius: 30, backgroundColor: Colors.surface, borderColor: Colors.border, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   mark: { width: 100, height: 100, borderRadius: 24 },
@@ -137,8 +147,8 @@ const styles = StyleSheet.create({
   error: { color: Colors.error, textAlign: 'center', lineHeight: 19, fontSize: 12 },
   offlineButton: { alignItems: 'center', paddingTop: 4, minHeight: 34, justifyContent: 'center' },
   offlineText: { color: Colors.textSecondary, fontSize: 12, fontWeight: '600', textDecorationLine: 'underline' },
-  offlineNote: { color: Colors.textMuted, fontSize: 10, textAlign: 'center', lineHeight: 15 },
+  offlineNote: { color: Colors.textMuted, fontSize: 11, textAlign: 'center', lineHeight: 15 },
   legal: { flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap', paddingTop: 8 },
-  legalText: { color: Colors.textMuted, fontSize: 10 },
-  legalLink: { color: Colors.textSecondary, fontSize: 10, textDecorationLine: 'underline' },
+  legalText: { color: Colors.textMuted, fontSize: 11 },
+  legalLink: { color: Colors.textSecondary, fontSize: 11, textDecorationLine: 'underline' },
 });

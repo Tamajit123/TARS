@@ -1,3 +1,4 @@
+import { AccessibleModal as Modal } from '@/components/common/AccessibleModal';
 /**
  * EditAgentModal Component
  *
@@ -8,24 +9,24 @@
  * - Clean Save & Cancel actions
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  Modal,
   TextInput,
   TouchableOpacity,
-  TouchableWithoutFeedback,
-  KeyboardAvoidingView,
   Platform,
 } from 'react-native';
 import { HugeiconsIcon } from '@hugeicons/react-native';
-import { Cancel01Icon, CheckmarkCircle02Icon } from '@hugeicons/core-free-icons';
-import { Colors } from '@/constants/colors';
+import { Cancel01Icon, CheckmarkCircle02Icon } from '@/constants/icons';
+import { useAppTheme } from '@/context/ThemeContext';
+import type { ColorPalette } from '@/constants/colors';
+import { Colors as DefaultColors } from '@/constants/colors';
 import { MascotAvatar } from './MascotAvatar';
 import { showToast } from '@/context/ToastContext';
 import { AgentProfile } from '@/types';
+import { KeyboardFormLayout } from './KeyboardFormLayout';
 
 export interface EditAgentModalProps {
   visible: boolean;
@@ -34,16 +35,16 @@ export interface EditAgentModalProps {
   initialIcon?: string;
   initialColor?: string;
   onClose: () => void;
-  onSave: (data: AgentProfile) => void;
+  onSave: (data: AgentProfile) => void | Promise<void>;
 }
 
 const THEME_COLORS = [
-  Colors.primary,
-  Colors.avatarAccentIndigo,
-  Colors.avatarAccentEmerald,
-  Colors.avatarAccentAmber,
-  Colors.avatarAccentViolet,
-  Colors.avatarAccentRose,
+  DefaultColors.primary,
+  DefaultColors.avatarAccentIndigo,
+  DefaultColors.avatarAccentEmerald,
+  DefaultColors.avatarAccentAmber,
+  DefaultColors.avatarAccentViolet,
+  DefaultColors.avatarAccentRose,
 ];
 
 const AVATAR_OPTIONS = ['tars', '🤖', '✨', '🧠', '🚀', '💡', '🎯', '🌱', '⚡'];
@@ -53,13 +54,18 @@ export const EditAgentModal: React.FC<EditAgentModalProps> = ({
   initialName,
   initialSubtitle = 'Autonomous Agent',
   initialIcon = 'tars',
-  initialColor = Colors.primary,
+  initialColor = DefaultColors.primary,
   onClose,
   onSave,
 }) => {
+  const { colors: Colors } = useAppTheme();
+  const styles = createStyles(Colors);
   const [name, setName] = useState(initialName);
   const [selectedIcon, setSelectedIcon] = useState(initialIcon);
   const [selectedColor, setSelectedColor] = useState(initialColor);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const closeEditor = () => { if (!savingRef.current) onClose(); };
 
   useEffect(() => {
     if (visible) {
@@ -69,11 +75,12 @@ export const EditAgentModal: React.FC<EditAgentModalProps> = ({
     }
   }, [visible, initialName, initialIcon, initialColor]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const trimmed = name.trim();
-    if (!trimmed) return;
-
-    onSave({
+    if (!trimmed || savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    try { await onSave({
       name: trimmed,
       subtitle: initialSubtitle,
       icon: selectedIcon,
@@ -81,6 +88,8 @@ export const EditAgentModal: React.FC<EditAgentModalProps> = ({
     });
     showToast('Agent updated');
     onClose();
+    } catch { showToast('Agent settings could not be saved. Please retry.'); }
+    finally { savingRef.current = false; setSaving(false); }
   };
 
   return (
@@ -88,20 +97,20 @@ export const EditAgentModal: React.FC<EditAgentModalProps> = ({
       visible={visible}
       transparent
       animationType="fade"
-      onRequestClose={onClose}>
-      <TouchableWithoutFeedback onPress={onClose}>
-        <View style={styles.overlay}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={styles.keyboardContainer}>
-            <TouchableWithoutFeedback>
-              <View style={styles.card}>
+      onRequestClose={closeEditor}>
+      <KeyboardFormLayout centered backdropStyle={{ backgroundColor: 'rgba(0, 0, 0, 0.4)' }} cardStyle={styles.card} footer={
+        <View style={styles.actionRow}>
+          <TouchableOpacity style={styles.cancelBtn} onPress={closeEditor} disabled={saving} activeOpacity={0.7} accessibilityRole="button"><Text style={styles.cancelText}>Cancel</Text></TouchableOpacity>
+          <TouchableOpacity style={[styles.saveBtn, { backgroundColor: selectedColor }]} disabled={saving || !name.trim()} onPress={handleSave} activeOpacity={0.8} accessibilityRole="button"><Text style={styles.saveText}>{saving ? 'Saving…' : 'Save'}</Text></TouchableOpacity>
+        </View>
+      }>
                 {/* Header with Close */}
                 <View style={styles.header}>
                   <Text style={styles.title}>Edit Agent</Text>
                   <TouchableOpacity
                     style={styles.closeBtn}
-                    onPress={onClose}
+                    onPress={closeEditor}
+                    disabled={saving}
                     activeOpacity={0.7}>
                     <HugeiconsIcon icon={Cancel01Icon} size={18} color={Colors.iconMuted} />
                   </TouchableOpacity>
@@ -118,6 +127,7 @@ export const EditAgentModal: React.FC<EditAgentModalProps> = ({
                   <TextInput
                     style={styles.input}
                     value={name}
+                    editable={!saving}
                     onChangeText={setName}
                     placeholder="Agent name"
                     placeholderTextColor={Colors.iconMuted}
@@ -141,6 +151,7 @@ export const EditAgentModal: React.FC<EditAgentModalProps> = ({
                             isSelected && styles.avatarOptionSelected,
                           ]}
                           onPress={() => setSelectedIcon(icon)}
+                          disabled={saving}
                           activeOpacity={0.8}
                           accessibilityRole="button"
                           accessibilityLabel={icon === 'tars' ? 'TARS avatar' : `${icon} avatar`}>
@@ -166,6 +177,7 @@ export const EditAgentModal: React.FC<EditAgentModalProps> = ({
                             isSelected && styles.colorDotSelected,
                           ]}
                           onPress={() => setSelectedColor(color)}
+                          disabled={saving}
                           activeOpacity={0.8}>
                           {isSelected && (
                             <HugeiconsIcon
@@ -181,43 +193,12 @@ export const EditAgentModal: React.FC<EditAgentModalProps> = ({
                   </View>
                 </View>
 
-                {/* Actions */}
-                <View style={styles.actionRow}>
-                  <TouchableOpacity
-                    style={styles.cancelBtn}
-                    onPress={onClose}
-                    activeOpacity={0.7}>
-                    <Text style={styles.cancelText}>Cancel</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.saveBtn, { backgroundColor: selectedColor }]}
-                    onPress={handleSave}
-                    activeOpacity={0.8}>
-                    <Text style={styles.saveText}>Save</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </TouchableWithoutFeedback>
-          </KeyboardAvoidingView>
-        </View>
-      </TouchableWithoutFeedback>
+      </KeyboardFormLayout>
     </Modal>
   );
 };
 
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  keyboardContainer: {
-    width: '100%',
-    alignItems: 'center',
-  },
+const createStyles = (Colors: ColorPalette) => StyleSheet.create({
   card: {
     width: '100%',
     maxWidth: 340,

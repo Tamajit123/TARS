@@ -1,5 +1,3 @@
-import { Platform } from 'react-native';
-import Constants from 'expo-constants';
 import { supabase } from '@/lib/supabase';
 import {
   Tool,
@@ -15,17 +13,15 @@ import {
  * Fetch active tools directly from Supabase `tools` table.
  */
 export const fetchToolsFromSupabase = async (): Promise<Tool[]> => {
-  const { data, error } = await supabase
-    .from('tools')
-    .select('*')
-    .order('sort_order', { ascending: true });
+  const { data, error } = await supabase.functions.invoke('agent-run', { body: { mode: 'tools_catalog' } });
 
   if (error) {
     console.error('[tools.ts] Supabase query error fetching tools:', error.message);
     throw error;
   }
 
-  return (data as Tool[]) || [];
+  if (data?.ok !== true || !Array.isArray(data.tools)) throw new Error(data?.message || 'The tool catalog could not be verified.');
+  return data.tools as Tool[];
 };
 
 /**
@@ -118,6 +114,9 @@ export const fetchToolsWithUserConnection = async (
       connected_label: conn ? conn.connected_label : null,
       connected_email: conn ? conn.connected_email : null,
       composio_auth_config_id: tool.composio_auth_config_id,
+      enabled: tool.enabled,
+      availability: tool.availability,
+      availability_reason: tool.availability_reason,
       composio_connected_account_id: conn ? conn.composio_connected_account_id : null,
     };
   });
@@ -194,24 +193,6 @@ export const logToolRun = async (
 };
 
 /**
- * Helper to resolve API base URL for non-web (mobile) fetch calls.
- */
-function getApiBaseUrl(): string {
-  if (process.env.EXPO_PUBLIC_API_URL) {
-    return process.env.EXPO_PUBLIC_API_URL;
-  }
-  const hostUri =
-    Constants.expoConfig?.hostUri ||
-    (Constants as any).manifest2?.extra?.expoGo?.debuggerHost;
-  if (hostUri) {
-    const host = hostUri.split(':')[0];
-    const port = hostUri.split(':')[1] || '8081';
-    return `http://${host}:${port}`;
-  }
-  return 'http://localhost:8081';
-}
-
-/**
  * Helper to execute backend endpoint requests with Auth token.
  */
 async function callToolApi<T = any>(
@@ -220,40 +201,18 @@ async function callToolApi<T = any>(
 ): Promise<T> {
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData?.session?.access_token;
-  const userId = sessionData?.session?.user?.id;
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const method = options.method || 'GET';
-  const reqBody = options.body ? { userId, ...options.body } : undefined;
-
-  let url = endpointPath;
-  if (!url.startsWith('http://') && !url.startsWith('https://')) {
-    if (Platform.OS !== 'web') {
-      const baseUrl = getApiBaseUrl();
-      url = `${baseUrl.replace(/\/+$/, '')}${url.startsWith('/') ? '' : '/'}${url}`;
-    }
-  }
-
-  const res = await fetch(url, {
-    method,
-    headers,
-    body: reqBody ? JSON.stringify(reqBody) : undefined,
+  const match = endpointPath.match(/^\/api\/tools\/([^/]+)\/(connect|status|disconnect)$/);
+  if (!match || !token) throw new Error('Sign in to manage connections.');
+  const { data, error } = await supabase.functions.invoke('agent-run', {
+    body: { ...options.body, toolId: decodeURIComponent(match[1]), mode: `tool_${match[2]}` },
+    timeout: 70000,
   });
-
-  const json = await res.json();
-
-  if (!res.ok) {
-    throw new Error(json.error || `API Request failed with status ${res.status}`);
+  if (error) {
+    const details = await error.context?.json?.().catch(() => null);
+    throw new Error(details?.message || 'The secure connection service is unavailable.');
   }
-
-  return json as T;
+  if (data?.success !== true) throw new Error(data?.message || 'The connection could not be verified.');
+  return data as T;
 }
 
 /**
@@ -262,13 +221,13 @@ async function callToolApi<T = any>(
  */
 export const startToolConnectionApi = async (
   toolId: string,
-  callbackUrl?: string
+  callbackTarget: 'native' | 'hosted' | 'web' = 'native'
 ): Promise<StartConnectionResponse> => {
   return callToolApi<StartConnectionResponse>(
     `/api/tools/${encodeURIComponent(toolId)}/connect`,
     {
       method: 'POST',
-      body: { callbackUrl },
+      body: { callbackTarget },
     }
   );
 };

@@ -1,6 +1,4 @@
-alter table public.scheduled_agent_tasks
-drop constraint if exists scheduled_agent_tasks_delivery_check;
-
-alter table public.scheduled_agent_tasks
-add constraint scheduled_agent_tasks_delivery_check
-check (length(trim(delivery)) > 0);
+-- Deprecated standalone setup: intentionally contains no SQL mutations.
+-- Apply the tracked migrations in supabase/migrations through the linked CLI.
+-- Existing project setup and exact commands: docs/LIVE_DATABASE_REPORT.md.
+-- Do not create duplicate Vault entries or overwrite existing task definitions.

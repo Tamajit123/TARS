@@ -17,6 +17,10 @@ export interface ChatMessage {
   text: string;
   /** Formatted timestamp display string (e.g. "3:35 PM") */
   timestamp: string;
+  createdAt?: string;
+  requestId?: string;
+  richResponse?: import('../../supabase/functions/_shared/richResponse').RichResponse;
+  attachments?: import('../../supabase/functions/_shared/mediaPolicy').AttachmentRef[];
 
 }
 

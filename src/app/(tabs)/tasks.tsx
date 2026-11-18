@@ -1,3 +1,9 @@
+import { DeviceAlarmsSection } from '@/components/tasks/DeviceAlarmsSection';
+import {RemindersSection} from '@/components/tasks/RemindersSection';
+import { TabScreen } from '@/components/common/TabScreen';
+import { AccessibleModal as Modal } from '@/components/common/AccessibleModal';
+import { ScreenHeading } from '@/components/common/ScreenHeading';
+import { MotionPressable } from '@/components/common/MotionPressable';
 /**
  * Tasks Tab Screen ('/(tabs)/tasks')
  *
@@ -6,7 +12,7 @@
  * - Lists the user's real scheduled agent tasks from Supabase
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -15,9 +21,7 @@ import {
   TouchableOpacity,
   Switch,
   ActivityIndicator,
-  Alert,
   RefreshControl,
-  Modal,
   TextInput,
   Pressable,
 } from 'react-native';
@@ -27,8 +31,10 @@ import {
   Target01Icon,
   Clock01Icon,
   PlayIcon,
-} from '@hugeicons/core-free-icons';
-import { Colors } from '@/constants/colors';
+} from '@/constants/icons';
+import { useAppTheme } from '@/context/ThemeContext';
+import type { ColorPalette } from '@/constants/colors';
+
 import {
   fetchScheduledAgentTasks,
   formatScheduleRule,
@@ -36,12 +42,18 @@ import {
   ScheduledAgentTask,
   updateScheduledAgentTaskStatus,
   createScheduledAgentTask,
+  editScheduledAgentTask,
+  removeScheduledAgentTask,
+  fetchScheduledTaskHistory,
 } from '@/lib/scheduledTasks';
 import { showToast } from '@/context/ToastContext';
-import { ScheduleConfirmation } from '@/types';
+import { ScheduleConfirmation, ScheduleRule } from '@/types';
 import { supabase } from '@/lib/supabase';
+import { KeyboardFormLayout } from '@/components/common/KeyboardFormLayout';
 
 export default function TasksScreen() {
+  const { colors: Colors } = useAppTheme();
+  const styles = createStyles(Colors);
   const [tasks, setTasks] = useState<ScheduledAgentTask[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -52,8 +64,28 @@ export default function TasksScreen() {
   const [newPrompt, setNewPrompt] = useState('');
   const [newTime, setNewTime] = useState('09:00');
   const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
   const [createError, setCreateError] = useState('');
+  const [editing, setEditing] = useState<ScheduledAgentTask | null>(null);
+  const [frequency, setFrequency] = useState<'daily' | 'weekly'>('daily');
+  const [weekday, setWeekday] = useState('monday');
+  const [historyTask, setHistoryTask] = useState<ScheduledAgentTask | null>(null);
+  const [history, setHistory] = useState<Awaited<ReturnType<typeof fetchScheduledTaskHistory>>>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [taskAction,setTaskAction] = useState<{task:ScheduledAgentTask;kind:'run'|'remove'} | null>(null);
 
+  const openEditor = (task: ScheduledAgentTask | null) => {
+    setEditing(task); setNewTitle(task?.title || ''); setNewPrompt(task?.original_prompt || '');
+    setNewTime(task?.schedule_rule.time || '09:00'); setFrequency(task?.schedule_rule.frequency || 'daily');
+    setWeekday(task?.schedule_rule.weekday || 'monday'); setCreateError(''); setCreateOpen(true);
+  };
+  const openHistory = async (task: ScheduledAgentTask) => {
+    setHistoryTask(task); setHistory([]); setHistoryError(''); setHistoryLoading(true);
+    try { setHistory(await fetchScheduledTaskHistory(task.id)); }
+    catch (error) { setHistoryError(getErrorMessage(error, 'Could not load execution history.')); }
+    finally { setHistoryLoading(false); }
+  };
   const loadTasks = useCallback(async (refreshing = false) => {
     if (refreshing) setIsRefreshing(true);
     else setIsLoading(true);
@@ -69,6 +101,15 @@ export default function TasksScreen() {
       else setIsLoading(false);
     }
   }, []);
+
+  const removeTask = (task: ScheduledAgentTask) => setTaskAction({task,kind:'remove'});
+  const applyTaskAction = async () => {
+    const action=taskAction; if(!action)return; setTaskAction(null);
+    if(action.kind==='run'){await runTaskNow(action.task);return;}
+    const task=action.task;
+      try { await removeScheduledAgentTask(task.id); await loadTasks(true); showToast('Task removed'); }
+      catch (error) { showToast(getErrorMessage(error, 'Could not remove task.')); }
+  };
 
   useEffect(() => {
     loadTasks();
@@ -99,18 +140,7 @@ export default function TasksScreen() {
   };
 
   const confirmRunTask = (task: ScheduledAgentTask) => {
-    Alert.alert(
-      'Run now?',
-      `Run "${task.title}" immediately?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Run',
-          onPress: () => runTaskNow(task),
-        },
-      ],
-      { cancelable: true }
-    );
+    setTaskAction({task,kind:'run'});
   };
 
   const runTaskNow = async (task: ScheduledAgentTask) => {
@@ -130,36 +160,43 @@ export default function TasksScreen() {
   };
 
   const createTask = async () => {
+    if (creatingRef.current) return;
     const title = newTitle.trim();
     const prompt = newPrompt.trim();
     if (!title || !prompt) { setCreateError('Add a title and a clear task description.'); return; }
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(newTime)) { setCreateError('Use 24-hour time, such as 09:30.'); return; }
+    creatingRef.current = true;
     setCreating(true);
     setCreateError('');
     try {
+      const rule: ScheduleRule = { frequency, time: newTime, ...(frequency === 'weekly' ? { weekday } : {}) };
+      if (editing) {
+        await editScheduledAgentTask(editing.id, { title, original_prompt: prompt, schedule_rule: rule, timezone: editing.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' });
+        setCreateOpen(false); await loadTasks(true); showToast('Task updated'); return;
+      }
       const { data: { user } } = await supabase.auth.getUser();
       const confirmation: ScheduleConfirmation = {
         title,
         originalPrompt: prompt,
         taskType: 'generic_prompt',
-        taskPayload: { task: prompt, prompt, useOpenAi: true },
-        scheduleRule: { frequency: 'daily', time: newTime },
+        taskPayload: { task: prompt, prompt },
+        scheduleRule: rule,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
         delivery: 'chat',
-        summary: `TARS will prepare this task every day at ${newTime}.`,
+        summary: `TARS will prepare this task ${frequency === 'weekly' ? `every ${weekday}` : 'every day'} at ${newTime}.`,
       };
       await createScheduledAgentTask(user?.id || '', confirmation);
       setCreateOpen(false);
       setNewTitle(''); setNewPrompt('');
       await loadTasks();
-      showToast('Daily task saved');
+      showToast('Task saved');
     } catch (error) {
       setCreateError(getErrorMessage(error, 'Could not save this task.'));
-    } finally { setCreating(false); }
+    } finally { creatingRef.current = false; setCreating(false); }
   };
 
   return (
-    <View style={styles.container}>
+    <TabScreen style={styles.container}>
       <ScrollView
         style={styles.scrollArea}
         contentContainerStyle={styles.scrollContent}
@@ -172,16 +209,17 @@ export default function TasksScreen() {
           />
         }>
         {/* Page Title & "+ New" Button */}
-        <View style={styles.headerRow}>
-          <Text style={styles.pageTitle}>Scheduled Agents & Goals</Text>
-          <TouchableOpacity
-            style={styles.newGoalBtn}
-            onPress={() => { setCreateError(''); setCreateOpen(true); }}
-            activeOpacity={0.8}>
-            <HugeiconsIcon icon={Add01Icon} size={15} color={Colors.white} strokeWidth={2.4} />
-            <Text style={styles.newGoalText}>New</Text>
-          </TouchableOpacity>
-        </View>
+        <View style={{ paddingHorizontal: 24, paddingTop: 20 }}><ScreenHeading title="Automations" subtitle="Scheduled agents and goals." action={<MotionPressable haptic style={styles.newGoalBtn} onPress={() => openEditor(null)} accessibilityRole="button" accessibilityLabel="New scheduled task"><HugeiconsIcon icon={Add01Icon} size={18} color={Colors.onPrimary} /><Text style={styles.newGoalText}>New</Text></MotionPressable>} />
+        <DeviceAlarmsSection />
+        <RemindersSection />
+        <Text accessibilityRole="header" style={{color:Colors.textPrimary,fontSize:22,fontWeight:'600',marginBottom:8}}>Scheduled Agents</Text>
+        <Text style={{color:Colors.textSecondary,fontSize:15,lineHeight:22,marginBottom:14}}>Run in the cloud even when TARS is closed. Results appear in Chat and Feed. Connected accounts must remain authorized.</Text>
+        <View style={{gap:8,marginBottom:20}}>{[
+          {title:'Morning briefing',prompt:'Summarize my unread Gmail emails from today and list my Google Calendar events for today in my timezone. Use real read-only connected tools. Highlight important next steps and cite sources when available.'},
+          {title:'Task roundup',prompt:'Show my open assigned Jira issues and my Trello cards using real read-only connected tools. Group by provider and include due dates and links when returned. Do not change anything.'},
+          {title:'Web digest',prompt:'Use Browserbase to search the web for recent AI developer news. Summarize three useful updates with real source links and retrieval dates. Do not invent results if search is blocked.'}
+        ].map(template=><MotionPressable key={template.title} accessibilityRole="button" accessibilityLabel={`Schedule ${template.title}`} onPress={()=>{openEditor(null);setNewTitle(template.title);setNewPrompt(template.prompt);}} style={{minHeight:48,padding:14,borderRadius:12,backgroundColor:Colors.surface,borderWidth:StyleSheet.hairlineWidth,borderColor:Colors.border}}><Text style={{color:Colors.textLink,fontSize:17}}>{template.title} →</Text></MotionPressable>)}</View>
+</View>
 
         {/* Task Rows */}
         {isLoading ? (
@@ -209,7 +247,7 @@ export default function TasksScreen() {
             <View key={task.id}>
               <TouchableOpacity
                 style={styles.taskRow}
-                onPress={() => showToast(task.title)}
+                onPress={() => void openHistory(task)}
                 activeOpacity={0.75}>
                 {/* Left Target Icon Badge */}
                 <View
@@ -304,6 +342,11 @@ export default function TasksScreen() {
                   </TouchableOpacity>
                 </View>
               </TouchableOpacity>
+              <View style={[styles.metaRow, { paddingHorizontal: 20, paddingBottom: 12, gap: 20 }]}>
+                <Pressable onPress={() => openEditor(task)} accessibilityRole="button"><Text style={styles.runManualText}>Edit</Text></Pressable>
+                <Pressable onPress={() => void openHistory(task)} accessibilityRole="button"><Text style={styles.runManualText}>History</Text></Pressable>
+                <Pressable onPress={() => removeTask(task)} accessibilityRole="button"><Text style={{ color: Colors.error }}>Remove</Text></Pressable>
+              </View>
 
               {index < tasks.length - 1 && <View style={styles.divider} />}
             </View>
@@ -311,19 +354,37 @@ export default function TasksScreen() {
           })
         )}
       </ScrollView>
-      <Modal visible={createOpen} transparent animationType="slide" onRequestClose={() => setCreateOpen(false)}>
-        <View style={styles.modalBackdrop}><View style={styles.modalCard}>
+      <Modal visible={Boolean(taskAction)} transparent animationType="fade" onRequestClose={()=>setTaskAction(null)}>
+        <View style={styles.modalBackdrop}><View accessibilityViewIsModal style={styles.modalCard}>
+          <Text accessibilityRole="header" style={styles.modalTitle}>{taskAction?.kind==='remove'?'Remove task?':'Run now?'}</Text>
+          <Text style={styles.modalHint}>{taskAction?.kind==='remove'?`Stop future runs of “${taskAction.task.title}”? Execution history is kept. A run already in progress may finish.`:`Run “${taskAction?.task.title}” immediately?`}</Text>
+          <View style={styles.modalActions}><Pressable accessibilityRole="button" style={styles.modalCancel} onPress={()=>setTaskAction(null)}><Text style={styles.modalCancelText}>Cancel</Text></Pressable><Pressable accessibilityRole="button" style={[styles.modalSave,taskAction?.kind==='remove'&&{backgroundColor:Colors.error}]} onPress={()=>void applyTaskAction()}><Text style={styles.modalSaveText}>{taskAction?.kind==='remove'?'Remove':'Run task'}</Text></Pressable></View>
+        </View></View>
+      </Modal>
+      <Modal visible={createOpen} transparent animationType="slide" onRequestClose={() => { if (!creatingRef.current) setCreateOpen(false); }}>
+        <KeyboardFormLayout onDismiss={() => { if (!creatingRef.current) setCreateOpen(false); }} dismissDisabled={creating} backdropStyle={styles.modalBackdrop} cardStyle={styles.modalCard} footer={
+          <View style={styles.modalActions}><Pressable onPress={() => setCreateOpen(false)} disabled={creating} style={styles.modalCancel} accessibilityRole="button"><Text style={styles.modalCancelText}>Cancel</Text></Pressable><Pressable onPress={createTask} disabled={creating} style={styles.modalSave} accessibilityRole="button">{creating ? <ActivityIndicator color={Colors.onPrimary} /> : <Text style={styles.modalSaveText}>Save task</Text>}</Pressable></View>
+        }>
           <Text style={styles.modalEyebrow}>A REPEATABLE ROUTINE</Text>
-          <Text style={styles.modalTitle}>New daily task</Text>
-          <Text style={styles.modalHint}>Set a task and time. TARS will only run it after you save it and the scheduled service is configured.</Text>
+          <Text style={styles.modalTitle}>{editing ? 'Edit task' : 'New task'}</Text>
+          <Text style={styles.modalHint}>Choose when TARS should run this task. Results are saved to your activity and chat.</Text>
           <TextInput value={newTitle} onChangeText={setNewTitle} placeholder="Task name" placeholderTextColor={Colors.textMuted} style={styles.modalInput} maxLength={160} accessibilityLabel="Task name" />
           <TextInput value={newPrompt} onChangeText={setNewPrompt} placeholder="What should TARS do?" placeholderTextColor={Colors.textMuted} style={[styles.modalInput, styles.promptInput]} multiline textAlignVertical="top" maxLength={10000} accessibilityLabel="Task instructions" />
           <TextInput value={newTime} onChangeText={setNewTime} placeholder="09:00" placeholderTextColor={Colors.textMuted} style={styles.modalInput} keyboardType="numbers-and-punctuation" maxLength={5} accessibilityLabel="Daily run time" />
+          <View style={[styles.metaRow, { gap: 20, marginBottom: 12 }]}>{(['daily', 'weekly'] as const).map(value => <Pressable key={value} onPress={() => setFrequency(value)} accessibilityRole="radio" aria-checked={frequency === value} accessibilityState={{ checked: frequency === value }}><Text style={{ color: frequency === value ? Colors.primary : Colors.textMuted }}>{value === 'daily' ? 'Every day' : 'Every week'}</Text></Pressable>)}</View>
+          {frequency === 'weekly' ? <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>{['monday','tuesday','wednesday','thursday','friday','saturday','sunday'].map(day => <Pressable key={day} onPress={() => setWeekday(day)} accessibilityRole="radio" aria-checked={weekday === day} accessibilityState={{ checked: weekday === day }} style={{ padding: 8 }}><Text style={{ color: weekday === day ? Colors.primary : Colors.textMuted }}>{day.slice(0, 3)}</Text></Pressable>)}</ScrollView> : null}
+          <Text style={styles.modalHint}>Time zone: {editing?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'}</Text>
           {createError ? <Text style={styles.createError}>{createError}</Text> : null}
-          <View style={styles.modalActions}><Pressable onPress={() => setCreateOpen(false)} style={styles.modalCancel}><Text style={styles.modalCancelText}>Cancel</Text></Pressable><Pressable onPress={createTask} disabled={creating} style={styles.modalSave}>{creating ? <ActivityIndicator color={Colors.background} /> : <Text style={styles.modalSaveText}>Save task</Text>}</Pressable></View>
+        </KeyboardFormLayout>
+      </Modal>
+      <Modal visible={Boolean(historyTask)} transparent animationType="slide" onRequestClose={() => setHistoryTask(null)}>
+        <View style={styles.modalBackdrop}><View style={[styles.modalCard, { maxHeight: '85%' }]}>
+          <Text style={styles.modalTitle}>Execution history</Text><Text style={styles.modalHint}>{historyTask?.title} · Latest 50 runs</Text>
+          {historyLoading ? <ActivityIndicator color={Colors.primary} /> : <ScrollView>{historyError ? <Text style={styles.createError}>{historyError}</Text> : !history.length ? <Text style={styles.modalHint}>No executions yet.</Text> : history.map(run => <View key={run.id} style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.border }}><Text style={{ color: Colors.textPrimary, fontWeight: '700' }}>{run.status} · {new Date(run.created_at).toLocaleString()}</Text><Text style={styles.modalHint}>{run.manual ? 'Manual' : 'Scheduled'} · Attempt {run.attempt}</Text><Text selectable style={{ color: run.error_message ? Colors.error : Colors.textPrimary }}>{run.error_message || run.output_summary || 'Waiting for the server result.'}</Text></View>)}</ScrollView>}
+          <Pressable style={styles.modalCancel} onPress={() => setHistoryTask(null)}><Text style={styles.modalCancelText}>Close</Text></Pressable>
         </View></View>
       </Modal>
-    </View>
+    </TabScreen>
   );
 }
 
@@ -341,7 +402,7 @@ function formatLastRun(value: string) {
   return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ColorPalette) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -372,15 +433,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: Colors.primary,
-    paddingVertical: 7,
-    paddingHorizontal: 12,
+    minHeight: 44,
+    paddingHorizontal: 14,
     borderRadius: 12,
     gap: 4,
   },
   newGoalText: {
     fontSize: 12,
     fontWeight: '700',
-    color: Colors.white,
+    color: Colors.onPrimary,
   },
   taskRow: {
     flexDirection: 'row',
@@ -400,7 +461,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   taskTitle: {
-    fontSize: 15.5,
+    fontSize: 17,
     fontWeight: '700',
     color: Colors.iconDark,
     lineHeight: 21,
@@ -527,15 +588,15 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: Colors.overlay },
   modalCard: { paddingHorizontal: 22, paddingTop: 24, paddingBottom: 34, backgroundColor: Colors.surfaceElevated, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: Colors.border },
-  modalEyebrow: { fontSize: 10, fontWeight: '700', letterSpacing: 1.7, color: Colors.primaryLight },
+  modalEyebrow: { fontSize: 11, fontWeight: '700', letterSpacing: 0.6, color: Colors.primaryLight },
   modalTitle: { color: Colors.textPrimary, fontSize: 23, fontWeight: '700', marginTop: 8 },
   modalHint: { color: Colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 7, marginBottom: 15 },
-  modalInput: { minHeight: 48, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surface, color: Colors.textPrimary, borderRadius: 13, paddingHorizontal: 14, fontSize: 14, marginBottom: 10 },
+  modalInput: { minHeight: 48, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surface, color: Colors.textPrimary, borderRadius: 13, paddingHorizontal: 14, fontSize: 17, marginBottom: 10 },
   promptInput: { height: 96, paddingTop: 12 },
   createError: { color: Colors.error, fontSize: 12, lineHeight: 17, marginBottom: 8 },
   modalActions: { flexDirection: 'row', gap: 10, marginTop: 5 },
   modalCancel: { flex: 1, minHeight: 48, borderRadius: 13, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
   modalCancelText: { color: Colors.textPrimary, fontWeight: '700' },
   modalSave: { flex: 1, minHeight: 48, borderRadius: 13, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
-  modalSaveText: { color: Colors.white, fontWeight: '800' },
+  modalSaveText: { color: Colors.onPrimary, fontWeight: '800' },
 });

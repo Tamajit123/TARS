@@ -1,0 +1,151 @@
+# Cleanup manifest — 2026-10-26
+
+All 141 tracked files below were moved, not destroyed. Their working copies are preserved at `D:/TARS-reference-archive-20261026/` followed by the same relative path.
+
+The 129 reference inspection files are excluded reference material; the 12 active-tree files are obsolete Expo Node routes and adapters superseded by the deployed Edge Functions.
+
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/.claude/settings.json`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/.gitignore`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/.vscode/extensions.json`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/.vscode/settings.json`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/AGENTS.md`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/CODEBASE_EXPLANATION.md`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/LICENSE`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/README.md`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/app.json`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/assets/expo.icon/Assets/expo-symbol 2.svg`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/assets/expo.icon/Assets/grid.png`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/assets/expo.icon/icon.json`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/assets/images/android-icon-background.png`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/assets/images/android-icon-foreground.png`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/assets/images/android-icon-monochrome.png`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/assets/images/cooper_mascot.jpg`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/assets/images/favicon.png`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/assets/images/icon.png`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/assets/images/splash-icon.png`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/package-lock.json`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/package.json`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/app/(tabs)/_layout.tsx`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/app/(tabs)/chat.tsx`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/app/(tabs)/feed.tsx`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/app/(tabs)/ideas.tsx`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/app/(tabs)/index.tsx`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/app/(tabs)/settings.tsx`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/app/(tabs)/tasks.tsx`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/app/_layout.tsx`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/app/home.tsx`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/app/index.tsx`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/components/common/AppHeader.tsx`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/components/common/EditAgentModal.tsx`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/components/common/MascotAvatar.tsx`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/components/common/SettingsMenuModal.tsx`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/components/common/SidebarDrawer.tsx`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/components/common/index.ts`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/constants/colors.ts`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/constants/dummyData.ts`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/constants/theme.ts`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/context/ToastContext.tsx`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/src/types/index.ts`
+- `.reference-inspection-20261024/AgentDemo/ai-agent-react-native-app-master/tsconfig.json`
+- `.reference-inspection-20261024/Free/Free/browserbase files/BrowserbaseSession.ts`
+- `.reference-inspection-20261024/Free/Free/browserbase files/browserSessionStore.ts`
+- `.reference-inspection-20261024/Free/Free/browserbase files/browserbase.ts`
+- `.reference-inspection-20261024/Free/Free/browserbase files/chat+api.ts`
+- `.reference-inspection-20261024/Free/Free/docs/CODEBASE_EXPLANATION.md`
+- `.reference-inspection-20261024/Free/Free/docs/COMPOSIO_TOOLS_SETUP.md`
+- `.reference-inspection-20261024/Free/Free/docs/scheduled-agent-tasks.md`
+- `.reference-inspection-20261024/Free/Free/supabase/functions/agent-run/README.md`
+- `.reference-inspection-20261024/Free/Free/supabase/functions/agent-run/allow_external_schedule_delivery.sql`
+- `.reference-inspection-20261024/Free/Free/supabase/functions/agent-run/index.ts`
+- `.reference-inspection-20261024/Free/Free/supabase/functions/agent-run/schedule.sql`
+- `.reference-inspection-20261024/Free/Free/supabase/functions/agent-run/scheduled_agent_tasks.sql`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/.claude/settings.json`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/.gitignore`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/.vscode/extensions.json`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/.vscode/settings.json`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/AGENTS.md`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/LICENSE`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/README.md`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/app.json`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/assets/expo.icon/Assets/expo-symbol 2.svg`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/assets/expo.icon/Assets/grid.png`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/assets/expo.icon/icon.json`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/assets/images/android-icon-background.png`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/assets/images/android-icon-foreground.png`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/assets/images/android-icon-monochrome.png`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/assets/images/cooper_mascot.jpg`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/assets/images/favicon.png`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/assets/images/icon.png`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/assets/images/splash-icon.png`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/docs/CODEBASE_EXPLANATION.md`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/docs/COMPOSIO_TOOLS_SETUP.md`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/docs/scheduled-agent-tasks.md`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/package-lock.json`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/package.json`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/app/(tabs)/_layout.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/app/(tabs)/chat.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/app/(tabs)/feed.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/app/(tabs)/ideas.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/app/(tabs)/index.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/app/(tabs)/settings.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/app/(tabs)/tasks.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/app/_layout.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/app/api/chat+api.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/app/api/tools/[toolId]/connect+api.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/app/api/tools/[toolId]/disconnect+api.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/app/api/tools/[toolId]/status+api.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/app/home.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/app/index.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/app/tools.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/app/tools/[toolId]/connect+api.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/app/tools/[toolId]/disconnect+api.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/app/tools/[toolId]/status+api.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/components/common/AppHeader.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/components/common/ChatBrowserPreview.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/components/common/EditAgentModal.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/components/common/MascotAvatar.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/components/common/SettingsMenuModal.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/components/common/SidebarDrawer.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/components/common/index.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/components/tools/ManageToolModal.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/components/tools/ToolCard.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/constants/colors.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/constants/dummyData.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/constants/theme.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/context/ToastContext.tsx`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/lib/browserbase.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/lib/composioAgent.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/lib/composioBackend.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/lib/openAiAgent.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/lib/scheduleIntentAgent.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/lib/scheduledTasks.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/lib/services.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/lib/supabase.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/services/chatHistory.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/services/tools.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/services/tools/BrowserbaseSession.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/services/tools/browserSessionStore.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/types/index.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/src/types/tools.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/supabase/functions/agent-run/README.md`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/supabase/functions/agent-run/allow_external_schedule_delivery.sql`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/supabase/functions/agent-run/index.ts`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/supabase/functions/agent-run/schedule.sql`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/supabase/functions/agent-run/scheduled_agent_tasks.sql`
+- `.reference-inspection-20261024/Muse/muse-ai-mobile-app-clone-main/tsconfig.json`
+- `src/app/api/tools/[toolId]/connect+api.ts`
+- `src/app/api/tools/[toolId]/disconnect+api.ts`
+- `src/app/api/tools/[toolId]/status+api.ts`
+- `src/app/tools/[toolId]/connect+api.ts`
+- `src/app/tools/[toolId]/disconnect+api.ts`
+- `src/app/tools/[toolId]/status+api.ts`
+- `src/lib/browserbase.ts`
+- `src/lib/composioAgent.ts`
+- `src/lib/composioBackend.ts`
+- `src/lib/openAiAgent.ts`
+- `src/services/tools/BrowserbaseSession.ts`
+- `src/services/tools/browserSessionStore.ts`
+
+Also moved: the untracked `muse-ai-mobile-app-clone-reference/` checkout and ignored `references/` directory, including all five screenshots from re.zip. Their contents, nested Git repository, environment and licenses remain in the archive. No reference files were individually deleted.
+
+Removed direct dependencies with npm: @browserbasehq/sdk, @browserbasehq/stagehand, @composio/openai-agents, @openai/agents, zod. Their only application consumers were the archived adapters. npm removed 35 packages in total and regenerated package-lock.json. @composio/core remains for operator scripts.

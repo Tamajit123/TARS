@@ -1,3 +1,4 @@
+import { AccessibleModal as Modal } from '@/components/common/AccessibleModal';
 /**
  * ManageToolModal Component ('src/components/tools/ManageToolModal.tsx')
  *
@@ -12,12 +13,10 @@ import {
   View,
   Text,
   StyleSheet,
-  Modal,
   TouchableOpacity,
   TouchableWithoutFeedback,
   ActivityIndicator,
   Platform,
-  Image,
 } from 'react-native';
 import { HugeiconsIcon } from '@hugeicons/react-native';
 import {
@@ -26,9 +25,13 @@ import {
   Logout01Icon,
   InformationCircleIcon,
   UserIcon,
-} from '@hugeicons/core-free-icons';
-import { Colors } from '@/constants/colors';
+} from '@/constants/icons';
+import { useAppTheme } from '@/context/ThemeContext';
+import type { ColorPalette } from '@/constants/colors';
+
 import { ToolWithConnection } from '@/types/tools';
+import { ProviderLogo } from './ProviderLogo';
+import { getProvider } from '@/constants/providers';
 
 export interface ManageToolModalProps {
   visible: boolean;
@@ -47,9 +50,11 @@ export const ManageToolModal: React.FC<ManageToolModalProps> = ({
   onReconnect,
   onDisconnect,
 }) => {
+  const { colors: Colors } = useAppTheme();
+  const styles = createStyles(Colors);
   if (!tool) return null;
 
-  const imageUrl = tool.icon_url || tool.logo_url;
+  const name = getProvider(tool.toolkit_slug, tool.slug, tool.id)?.name || tool.name;
   const isConnected = tool.status === 'connected';
 
   return (
@@ -66,21 +71,11 @@ export const ManageToolModal: React.FC<ManageToolModalProps> = ({
               <View style={styles.header}>
                 <View style={styles.headerTitleRow}>
                   <View style={styles.logoWrapper}>
-                    {imageUrl ? (
-                      <Image
-                        source={{ uri: imageUrl }}
-                        style={styles.logoImage}
-                        resizeMode="contain"
-                      />
-                    ) : (
-                      <Text style={styles.initialText}>
-                        {tool.name.charAt(0).toUpperCase()}
-                      </Text>
-                    )}
+                    <ProviderLogo identifiers={[tool.toolkit_slug, tool.slug, tool.id]} name={name} uri={tool.icon_url || tool.logo_url} />
                   </View>
                   <View style={styles.titleTextWrapper}>
                     <Text style={styles.toolTitle} numberOfLines={1}>
-                      {tool.name}
+                      {name}
                     </Text>
                     <View style={styles.statusPill}>
                       <View
@@ -100,7 +95,8 @@ export const ManageToolModal: React.FC<ManageToolModalProps> = ({
                   </View>
                 </View>
 
-                <TouchableOpacity
+                <TouchableOpacity accessibilityRole="button"
+                  accessibilityLabel={`Close ${name} connection`}
                   style={styles.closeBtn}
                   onPress={onClose}
                   disabled={isLoading}
@@ -145,9 +141,9 @@ export const ManageToolModal: React.FC<ManageToolModalProps> = ({
                         color={Colors.textMuted}
                       />
                       <View style={styles.detailContent}>
-                        <Text style={styles.detailLabel}>Auth Config ID</Text>
+                        <Text style={styles.detailLabel}>Authorization</Text>
                         <Text style={styles.detailValueSubtle} numberOfLines={1}>
-                          {tool.composio_auth_config_id}
+                          {isConnected?'Verified active connection':'Authorization needs attention'}
                         </Text>
                       </View>
                     </View>
@@ -158,7 +154,7 @@ export const ManageToolModal: React.FC<ManageToolModalProps> = ({
               {/* Actions */}
               <View style={styles.actionSection}>
                 {/* Reconnect Button */}
-                <TouchableOpacity
+                <TouchableOpacity accessibilityRole="button"
                   style={styles.reconnectBtn}
                   onPress={() => onReconnect(tool)}
                   disabled={isLoading}
@@ -181,7 +177,7 @@ export const ManageToolModal: React.FC<ManageToolModalProps> = ({
                 </TouchableOpacity>
 
                 {/* Disconnect Button */}
-                <TouchableOpacity
+                <TouchableOpacity accessibilityRole="button"
                   style={styles.disconnectBtn}
                   onPress={() => onDisconnect(tool)}
                   disabled={isLoading}
@@ -211,7 +207,7 @@ export const ManageToolModal: React.FC<ManageToolModalProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ColorPalette) => StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: Colors.overlay,
@@ -222,7 +218,7 @@ const styles = StyleSheet.create({
   card: {
     width: '100%',
     maxWidth: 360,
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surfaceElevated,
     borderRadius: 24,
     padding: 22,
     ...Platform.select({
@@ -303,9 +299,9 @@ const styles = StyleSheet.create({
     textTransform: 'capitalize',
   },
   closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: Colors.surfaceMuted,
     alignItems: 'center',
     justifyContent: 'center',

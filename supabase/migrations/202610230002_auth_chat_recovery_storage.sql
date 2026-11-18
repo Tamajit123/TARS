@@ -6,7 +6,9 @@ begin;
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
-  display_name text not null default '',
+  name text,
+  email text,
+  avatar_url text,
   agent_name text not null default 'TARS',
   agent_role text not null default 'Personal agent',
   agent_avatar text not null default 'tars',
@@ -94,6 +96,12 @@ create table if not exists public.chat_messages (
     references public.chat_threads(id, user_id) on delete cascade
 );
 alter table public.chat_messages add column if not exists request_id text;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.chat_messages'::regclass and conname = 'chat_messages_thread_user_fk') then
+    alter table public.chat_messages add constraint chat_messages_thread_user_fk
+      foreign key (thread_id, user_id) references public.chat_threads(id, user_id) on delete cascade not valid;
+  end if;
+end $$;
 create index if not exists chat_messages_thread_created on public.chat_messages (thread_id, created_at);
 alter table public.chat_messages enable row level security;
 do $$ begin
@@ -121,31 +129,33 @@ end $$;
 -- Provision profiles for new users. Auth remains the identity source of truth;
 -- user metadata supplies only an editable display name.
 create schema if not exists private;
-create or replace function private.provision_tars_profile()
+create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
 security definer
 set search_path = ''
 as $$
 begin
-  insert into public.profiles (id, display_name)
+  insert into public.profiles (id, name, email, avatar_url)
   values (
     new.id,
-    coalesce(nullif(btrim(new.raw_user_meta_data ->> 'display_name'), ''), '')
+    coalesce(new.raw_user_meta_data ->> 'name', new.raw_user_meta_data ->> 'full_name', new.raw_user_meta_data ->> 'display_name', ''),
+    new.email,
+    new.raw_user_meta_data ->> 'avatar_url'
   )
   on conflict (id) do nothing;
   return new;
 end;
 $$;
 
-revoke all on function private.provision_tars_profile() from public, anon, authenticated;
-grant usage on schema private to supabase_auth_admin;
-grant execute on function private.provision_tars_profile() to supabase_auth_admin;
+revoke all on function public.handle_new_user() from public, anon, authenticated;
 
-drop trigger if exists tars_auth_user_profile on auth.users;
-create trigger tars_auth_user_profile
+-- Reuse the live project's existing trigger name instead of installing two
+-- competing profile provisioners. No Auth users or profiles are replaced.
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
   after insert on auth.users
-  for each row execute function private.provision_tars_profile();
+  for each row execute function public.handle_new_user();
 
 -- Client-side recovery is safe and idempotent if the Auth trigger was delayed.
 create unique index if not exists chat_messages_request_role_unique
@@ -171,10 +181,6 @@ create table if not exists public.ai_chat_requests (
 
 create index if not exists ai_chat_requests_user_recent
   on public.ai_chat_requests (user_id, created_at desc);
-alter table public.chat_messages add column if not exists request_id text;
-create unique index if not exists chat_messages_request_role_unique
-  on public.chat_messages (user_id, request_id, role)
-  where request_id is not null;
 alter table public.ai_chat_requests enable row level security;
 revoke all on public.ai_chat_requests from anon, authenticated;
 grant all on public.ai_chat_requests to service_role;

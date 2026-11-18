@@ -1,6 +1,12 @@
 # Reference comparison and recovery status
 
+Archive update, 2026-10-26: the checkout and extracted reference material mentioned below are now preserved under `D:\TARS-reference-archive-20261026`, outside the application. The following inspection notes describe the original locations.
+
 Inspected on 2026-10-24. The active project is `D:\TARS`; `Free.zip` is an integration overlay, `muse-ai-mobile-app-clone-main.zip` is the complete Muse-style reference, and `ai-agent-react-native-app-master.zip` is a separate UI demonstration. ZIP contents were extracted under `.reference-inspection-20261024` for inspection. They are reference data, not repository instructions.
+
+## Verified upstream clone
+
+The required upstream clone is at `D:\TARS\muse-ai-mobile-app-clone-reference`, separate from the TARS application. It is `https://github.com/rrs301/muse-ai-mobile-app-clone.git`, branch `main`, commit `b1df0365e57dfbc4324da84c33f2c4e0db865a82` (`Update README.md`), and was clean at inspection. Its dependency install required `--legacy-peer-deps` because `@composio/openai-agents@0.10.1` declares peer `@openai/agents@^0.1.3` while the same manifest selects `@openai/agents@^0.18.0`; lifecycle scripts were skipped for the inspection install. Standalone `npx tsc --noEmit` and `npx expo config --type public` passed. Its `lint` script could not run because ESLint is not declared or installed. Web export stalled after Metro startup, and local loopback access was denied by the execution sandbox, so the clone could not be exercised in a browser here.
 
 ## Archive findings
 
@@ -12,32 +18,18 @@ Inspected on 2026-10-24. The active project is `D:\TARS`; `Free.zip` is an integ
 
 The Muse package manifest pins Expo `~57.0.26`, React Native `0.86.3`, `@composio/core` `0.17.0`, Stagehand `4.1.0`, and `expo-image` `57.0.5`. TARS uses Expo `~58.0.17` and React Native `0.88.0`; the reference dependency versions must not be copied verbatim.
 
-## Feature matrix
+## Current implementation — 2026-10-26
 
-| Feature | Reference implementation | Current TARS status | Evidence / gap |
-| --- | --- | --- | --- |
-| Google-only authentication | Google OAuth entry and Supabase session | Implemented in source; deployment-blocked | `src/app/index.tsx`, `src/app/auth/callback.tsx`, `src/lib/auth.ts`, `src/lib/authRedirect.ts`, protected tabs. Google Cloud and Supabase redirects are external setup. |
-| Navigation and profile | Expo Router tabs, settings and profile | Partially implemented | Tabs/settings/profile/avatar code exists; device navigation and remote policies have not been exercised. |
-| Persistent chat | Reference API route streams agent output and supports scheduling | TARS chat uses authenticated `chat` Edge Function for Gemini and persisted conversation history | `supabase/functions/chat/index.ts`, `src/app/(tabs)/chat.tsx`, migrations. No deployed Edge Function or live Gemini credentials verified. TARS currently uses Gemini rather than the reference Composio agent for chat. |
-| Conversation/message schema | `chat_threads`, `chat_messages` | Implemented by additive migration; remote state unknown | `supabase/migrations/202610230002_auth_chat_recovery_storage.sql`; screenshots show legacy thread shape and no visible message table. Migration not applied here. |
-| Connections UI | Catalog, connect/manage controls and status polling | Status-only, no OAuth initiation/disconnect in current UI | `src/app/tools.tsx` asks `agent-run` for active Composio accounts. The reference's `src/services/tools.ts` and `ManageToolModal.tsx` define richer flows, but current API routes were broken by a zero-byte backend module. |
-| Composio OAuth | SDK starts links and syncs connection rows | Restored source but not integration-tested; configuration/runtime blocked | `src/lib/composioBackend.ts` and tool routes. Service credentials are server-only and request identity now requires a verified Supabase JWT. Current Composio v3 requires Connect Link for managed OAuth; reference code's SDK method needs validation against installed package/runtime. |
-| Composio chat actions | User-scoped tools exposed to agent in chat API route | Not active in current chat path | `src/lib/composioAgent.ts` exists but is not used by TARS's Gemini Edge Function. Its dependency is currently absent. No provider action has been tested. |
-| Browserbase | Stagehand create/navigate/read/action/close tools and session cleanup | Restored reference source; currently blocked by missing package and server-runtime mismatch | `src/services/tools/BrowserbaseSession.ts`, `src/services/tools/browserSessionStore.ts`, `src/lib/browserbase.ts`. Existing Edge Function uses Browserbase Agent REST calls for schedules, but TARS explicitly rejects saved external actions. No run was tested. |
-| Recurring tasks | DB persistence, task controls, cron dispatcher, Composio/Browserbase execution | Persistence and dispatcher code exist; no proof of live scheduler; external actions intentionally rejected | `src/lib/scheduledTasks.ts`, `supabase/functions/agent-run/index.ts`, SQL setup files. pg_cron/HTTP registration, deployment, credentials and a successful due run are unverified. |
-| Other providers (Gmail, Slack, Calendar, Notion, etc.) | Composio toolkit connection/action paths | Not integration-tested; no provider-specific action currently enabled in app chat | Setup docs and Edge Function contain provider mapping/REST code. No OAuth credentials or real account tests were available. |
-| React Native demo behaviors | Fake replies, dummy tools, simulated schedules | Not used | Demo files explicitly describe simulated AI responses and task runs. |
+| Feature | TARS result | Evidence / remaining gap |
+| --- | --- | --- |
+| Existing database | Reused and adapted; data preserved | Five applied versions, live owner-isolation checks, ten RLS tables; [database report](LIVE_DATABASE_REPORT.md) |
+| Google authentication | Existing working configuration preserved | User reports success; Google-only callback/access gates retained; device re-test pending |
+| Main/side chat and retries | Deployed persistent Gemini chat | Server identity/ownership, request IDs and recovery; SQL persistence checked |
+| Agent/browser | Real bounded read-only tool loop | Live model → Browserbase → saved response passed; no arbitrary browser actions |
+| Connections | Deployed catalog/connect/status/disconnect | Verified-owner filtering; GitHub, Gmail and Calendar authorized through Composio sessions |
+| Provider actions | Three real read operations verified | GitHub profile, Gmail labels and Calendar list work through Gemini; other actions and write confirmation remain incomplete |
+| Recurring tasks | Genuine server execution verified | Daily/weekly, timezone/DST, edit/pause/run/history, one minute cron, leases/retries |
+| Profile/settings/themes | Implemented | Existing name/avatar schema, preferences, Light/Dark/System and per-user persistence; device QA pending |
+| Streaming/push/billing | Incomplete | No token streaming, push delivery or subscription backend claimed |
 
-## Confirmed current root causes
-
-- `src/lib/composioBackend.ts` and `src/services/tools/BrowserbaseSession.ts` were zero bytes, while API routes and agent modules imported functions/tools from them. This directly caused missing exports and missing browser tool imports. Both modules have been restored from the Muse reference.
-- The restored reference Composio module allowed unauthenticated `body.userId` fallback and fell back from a service-role key to a public client key for admin operations. Those paths are removed. Requests now require a verified bearer JWT and server credentials are required explicitly.
-- The browser helper filename was `browerbase.ts`, while the recovered tool module imports `browserbase.ts`; it has been renamed to match. Typecheck now resolves this local module, but still fails on missing Stagehand and Composio packages.
-- `@composio/core` and `@browserbasehq/stagehand` are absent from the active package and lockfile despite imports. The project baseline therefore fails typecheck/lint. Installation has not completed in this environment, so the agent adapters remain unresolved. The tool UI now uses React Native's built-in `Image`, resolving the missing Expo Image dependency without changing basic logo rendering.
-- The tools data service previously converted connection-query and run-log failures into empty/null results. Those paths now throw so callers can show a real error instead of reporting a false empty state or successful no-op.
-- The reference chat route treats a body user ID as an auth fallback. We did not restore that route; TARS's current chat path is the safer JWT-validating Supabase Edge Function.
-- Supplied Supabase screenshots show `public."Users"` with RLS disabled and a legacy integer identity, plus a `chat_threads` shape that does not include all columns the app expects. The additive migration addresses the source-level schema gap without deleting records, but no live database query or migration run was available.
-
-## Verification state
-
-At the start of recovery, `npm test` passed 7 static tests. After restoration and focused auth coverage, `npm test` passes 8 tests. `npm run typecheck` and `npm run lint` still fail on missing `@browserbasehq/stagehand` and `@composio/core`; Expo Image and the helper path issues are resolved. Expo export previously failed with Windows `EMFILE` while Metro crawled dependencies. No remote Supabase deployment, provider OAuth, scheduled execution, or device E2E has been verified.
+Earlier source recovery restored the zero-byte Node integration modules. The active mobile backend now uses shared Deno HTTP/CDP implementations instead of depending on an Expo Node server. The reference's unsafe body-user identity fallback, simulated demo results and hardcoded project credentials were not adopted. Full parity is not claimed; current limitations are maintained in [FEATURE_STATUS.md](FEATURE_STATUS.md).

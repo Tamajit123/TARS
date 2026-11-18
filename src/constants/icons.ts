@@ -1,0 +1,33 @@
+// Import icons through their individual package entry points. Importing the
+// package barrel makes Metro traverse the full 12k-icon catalog during export.
+export { default as Add01Icon } from '@hugeicons/core-free-icons/Add01Icon';
+export { default as ArrowLeft01Icon } from '@hugeicons/core-free-icons/ArrowLeft01Icon';
+export { default as ArrowRight01Icon } from '@hugeicons/core-free-icons/ArrowRight01Icon';
+export { default as Cancel01Icon } from '@hugeicons/core-free-icons/Cancel01Icon';
+export { default as CheckmarkCircle02Icon } from '@hugeicons/core-free-icons/CheckmarkCircle02Icon';
+export { default as CheckmarkSquare02Icon } from '@hugeicons/core-free-icons/CheckmarkSquare02Icon';
+export { default as Clock01Icon } from '@hugeicons/core-free-icons/Clock01Icon';
+export { default as Comment01Icon } from '@hugeicons/core-free-icons/Comment01Icon';
+export { default as Delete02Icon } from '@hugeicons/core-free-icons/Delete02Icon';
+export { default as Edit02Icon } from '@hugeicons/core-free-icons/Edit02Icon';
+export { default as File01Icon } from '@hugeicons/core-free-icons/File01Icon';
+export { default as Grid02Icon } from '@hugeicons/core-free-icons/Grid02Icon';
+export { default as HelpCircleIcon } from '@hugeicons/core-free-icons/HelpCircleIcon';
+export { default as Idea01Icon } from '@hugeicons/core-free-icons/Idea01Icon';
+export { default as InformationCircleIcon } from '@hugeicons/core-free-icons/InformationCircleIcon';
+export { default as Link02Icon } from '@hugeicons/core-free-icons/Link02Icon';
+export { default as Logout01Icon } from '@hugeicons/core-free-icons/Logout01Icon';
+export { default as MenuTwoLineIcon } from '@hugeicons/core-free-icons/MenuTwoLineIcon';
+export { default as Mic01Icon } from '@hugeicons/core-free-icons/Mic01Icon';
+export { default as MoreHorizontalIcon } from '@hugeicons/core-free-icons/MoreHorizontalIcon';
+export { default as PaintBrush01Icon } from '@hugeicons/core-free-icons/PaintBrush01Icon';
+export { default as PlayIcon } from '@hugeicons/core-free-icons/PlayIcon';
+export { default as RefreshIcon } from '@hugeicons/core-free-icons/RefreshIcon';
+export { default as Search01Icon } from '@hugeicons/core-free-icons/Search01Icon';
+export { default as SentIcon } from '@hugeicons/core-free-icons/SentIcon';
+export { default as Settings01Icon } from '@hugeicons/core-free-icons/Settings01Icon';
+export { default as Settings02Icon } from '@hugeicons/core-free-icons/Settings02Icon';
+export { default as Shield01Icon } from '@hugeicons/core-free-icons/Shield01Icon';
+export { default as SparklesIcon } from '@hugeicons/core-free-icons/SparklesIcon';
+export { default as Target01Icon } from '@hugeicons/core-free-icons/Target01Icon';
+export { default as UserIcon } from '@hugeicons/core-free-icons/UserIcon';

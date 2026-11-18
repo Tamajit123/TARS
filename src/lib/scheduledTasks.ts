@@ -9,6 +9,7 @@ export type ScheduledAgentTask = {
   title: string;
   original_prompt: string;
   schedule_rule: ScheduleRule;
+  timezone?: string;
   next_run_at: string;
   last_run_at: string | null;
   last_run_status: 'completed' | 'failed' | null;
@@ -64,7 +65,8 @@ export async function createScheduledAgentTask(
     await AsyncStorage.setItem(LOCAL_TASKS_KEY, JSON.stringify([task, ...tasks]));
     return task;
   }
-  const nextRunAt = getNextRunAt(confirmation.scheduleRule);
+  const { data: nextRunAt, error: ruleError } = await supabase.rpc('next_tars_run_at', { p_rule: confirmation.scheduleRule, p_timezone: confirmation.timezone });
+  if (ruleError || !nextRunAt) throw new Error(ruleError?.message || 'The schedule could not be calculated.');
   const taskPayload = {
     ...confirmation.taskPayload,
     ...(options?.sourceThreadId ? { sourceThreadId: options.sourceThreadId } : {}),
@@ -81,7 +83,7 @@ export async function createScheduledAgentTask(
       schedule_rule: confirmation.scheduleRule,
       timezone: confirmation.timezone,
       delivery: confirmation.delivery,
-      next_run_at: nextRunAt.toISOString(),
+      next_run_at: nextRunAt,
       status: 'active',
     })
     .select()
@@ -110,22 +112,19 @@ export async function fetchScheduledAgentTasks() {
   const { data, error } = await supabase
     .from('scheduled_agent_tasks')
     .select(
-      'id,title,original_prompt,schedule_rule,next_run_at,last_run_at,last_run_status,last_run_summary,last_run_error,status,created_at,updated_at'
+      'id,title,original_prompt,schedule_rule,timezone,next_run_at,last_run_at,last_run_status,last_run_summary,last_run_error,status,created_at,updated_at,agent_tool_runs(count)'
     )
     .eq('user_id', userId)
+    .neq('status', 'cancelled')
     .order('created_at', { ascending: false });
 
   if (error) {
     throw new Error(formatSupabaseError(error));
   }
 
-  const tasks = (data || []) as Omit<ScheduledAgentTask, 'runsCount'>[];
-  return Promise.all(
-    tasks.map(async (task) => ({
-      ...task,
-      runsCount: await fetchScheduledTaskRunCount(task.id),
-    }))
-  );
+  return (data || []).map(({ agent_tool_runs, ...task }) => ({
+    ...task, runsCount: agent_tool_runs?.[0]?.count || 0,
+  })) as ScheduledAgentTask[];
 }
 
 export async function updateScheduledAgentTaskStatus(
@@ -180,7 +179,7 @@ export async function runScheduledAgentTaskNow(taskId: string) {
   }
 
   if (data?.ok === false) {
-    throw new Error(data.error || 'Could not run schedule');
+    throw new Error(data.message || data.error || 'Could not run schedule');
   }
 
   if (data?.id !== taskId || data?.status !== 'completed') {
@@ -196,13 +195,38 @@ async function fetchScheduledTaskRunCount(taskId: string) {
   const { count, error } = await supabase
     .from('agent_tool_runs')
     .select('id', { count: 'exact', head: true })
-    .filter('metadata->>scheduled_task_id', 'eq', taskId);
+    .eq('scheduled_task_id', taskId);
 
   if (error) {
     throw new Error(formatSupabaseError(error));
   }
 
   return count || 0;
+}
+
+export async function editScheduledAgentTask(taskId: string, changes: { title: string; original_prompt: string; schedule_rule: ScheduleRule; timezone: string }) {
+  if (!isSupabaseConfigured) throw new Error('Connect Supabase to edit this task.');
+  const { error } = await supabase.from('scheduled_agent_tasks').update(changes).eq('id', taskId).select('id').single();
+  if (error) throw new Error(formatSupabaseError(error));
+}
+
+export async function removeScheduledAgentTask(taskId: string) {
+  if (!isSupabaseConfigured) {
+    await AsyncStorage.setItem(LOCAL_TASKS_KEY, JSON.stringify((await readLocalTasks()).filter(task => task.id !== taskId)));
+    return;
+  }
+  // Retain execution history while preventing all future claims.
+  const { error } = await supabase.from('scheduled_agent_tasks').update({ status: 'cancelled' }).eq('id', taskId).select('id').single();
+  if (error) throw new Error(formatSupabaseError(error));
+}
+
+export async function fetchScheduledTaskHistory(taskId: string) {
+  if (!isSupabaseConfigured) return [];
+  const { data, error } = await supabase.from('agent_tool_runs')
+    .select('id,status,created_at,started_at,finished_at,output_summary,error_message,attempt,manual')
+    .eq('scheduled_task_id', taskId).order('created_at', { ascending: false }).limit(50);
+  if (error) throw new Error(formatSupabaseError(error));
+  return data || [];
 }
 
 function formatSupabaseError(error: {

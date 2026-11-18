@@ -4,31 +4,51 @@
     "slug": "tars-ai",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/TARS-icon.png",
+    "icon": "./assets/icons/tars-light.png",
     "scheme": "tarsai",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "automatic",
     "ios": {
-      "bundleIdentifier": "app.tarsai.mobile"
+      "bundleIdentifier": "app.tarsai.mobile",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "icon": {
+        "light": "./assets/icons/tars-light.png",
+        "dark": "./assets/icons/tars-dark.png"
+      }
     },
     "android": {
       "package": "app.tarsai.mobile",
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
-        "backgroundColor": "#11110F",
-        "foregroundImage": "./assets/TARS-icon.png"
+        "backgroundColor": "#0D0F12",
+        "foregroundImage": "./assets/icons/tars-dark.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.RECEIVE_BOOT_COMPLETED"
+      ]
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/TARS-icon.png"
+      "favicon": "./assets/icons/tars-light.png"
     },
     "plugins": [
-      "expo-router",
+      [
+        "expo-router",
+        {
+          "asyncRoutes": {
+            "web": false
+          }
+        }
+      ],
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#11110F",
-          "image": "./assets/TARS-icon.png",
+          "backgroundColor": "#0D0F12",
+          "image": "./assets/icons/tars-dark.png",
           "imageWidth": 180
         }
       ],
@@ -36,15 +56,52 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow TARS to choose a profile photo."
+          "photosPermission": "TARS lets you choose photos to attach to a message or use as your profile photo.",
+          "cameraPermission": "TARS uses the camera when you choose to photograph a document or attach a photo.",
+          "microphonePermission": "TARS records a voice message only when you tap Start recording."
         }
       ],
       "expo-status-bar",
-      "expo-web-browser"
+      "expo-web-browser",
+      "@react-native-google-signin/google-signin",
+      [
+        "expo-notifications",
+        {
+          "sounds": [
+            "./assets/sounds/tars-alert.wav"
+          ],
+          "color": "#0071E3"
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "TARS records a voice message only when you tap Start recording.",
+          "enableBackgroundPlayback": false,
+          "enableBackgroundRecording": false
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "TARS obtains your location once when you choose it as the starting point for a route or nearby search.",
+          "locationAlwaysAndWhenInUsePermission": false,
+          "locationAlwaysPermission": false,
+          "isIosBackgroundLocationEnabled": false,
+          "isAndroidBackgroundLocationEnabled": false,
+          "isAndroidForegroundServiceEnabled": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "f9f92e27-d222-4a0f-ae50-6263521fdb27"
+      }
     }
   }
 }

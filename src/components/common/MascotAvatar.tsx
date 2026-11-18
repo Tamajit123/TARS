@@ -6,7 +6,9 @@
 
 import React from 'react';
 import { Image, StyleSheet, ImageStyle, StyleProp, Text, View } from 'react-native';
-import { Colors } from '@/constants/colors';
+import { useAppTheme } from '@/context/ThemeContext';
+import type { ColorPalette } from '@/constants/colors';
+import { Colors as DefaultColors } from '@/constants/colors';
 
 export interface MascotAvatarProps {
   /** Avatar diameter in pixels (defaults to 54) */
@@ -22,9 +24,11 @@ export interface MascotAvatarProps {
 export const MascotAvatar: React.FC<MascotAvatarProps> = ({
   size = 54,
   icon = 'tars',
-  color = Colors.primary,
+  color = DefaultColors.primary,
   style,
 }) => {
+  const { colors: Colors, resolved } = useAppTheme();
+  const styles = createStyles(Colors);
   if (icon !== 'tars') {
     return (
       <View
@@ -48,7 +52,7 @@ export const MascotAvatar: React.FC<MascotAvatarProps> = ({
 
   return (
     <Image
-      source={require('../../../TARS.png')}
+      source={resolved === 'dark' ? require('../../../assets/icons/tars-dark.png') : require('../../../assets/icons/tars-light.png')}
       style={[
         styles.avatar,
         {
@@ -63,7 +67,7 @@ export const MascotAvatar: React.FC<MascotAvatarProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ColorPalette) => StyleSheet.create({
   avatar: {
     backgroundColor: Colors.avatarPreviewBg,
   },

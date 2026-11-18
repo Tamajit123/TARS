@@ -17,14 +17,15 @@ test('core user data tables enable RLS and bind rows to the authenticated user',
 
 test('chat function requires a valid Supabase user token and keeps provider keys server-side', () => {
   const source = read('supabase/functions/chat/index.ts');
+  const provider = read('supabase/functions/_shared/providerTransport.ts');
   assert.match(source, /if \(!token\)[\s\S]{0,100}401/);
   assert.match(source, /authClient\.auth\.getUser\(\)/);
   assert.match(source, /\.eq\("id", conversationId\)[\s\S]{0,80}\.eq\("user_id", user\.id\)/);
   assert.match(source, /ai_chat_requests/);
   assert.match(source, /requestId/);
-  assert.match(source, /AbortSignal\.timeout/);
-  assert.match(source, /Deno\.env\.get\("GEMINI_API_KEY"\)/);
-  assert.match(source, /"x-goog-api-key": apiKey/);
+  assert.match(provider, /AbortSignal\.timeout/);
+  assert.match(provider, /Deno\.env\.get\('GEMINI_API_KEY'\)/);
+  assert.match(provider, /'x-goog-api-key': key/);
   assert.doesNotMatch(source, /EXPO_PUBLIC_.*(?:GEMINI|SERVICE_ROLE)/i);
 });
 
@@ -43,7 +44,9 @@ test('avatar storage is private and only allows the owner folder', () => {
   assert.match(sql, /values \('tars-avatars', 'tars-avatars', false/i);
   assert.match(sql, /storage\.foldername\(name\)\)\[1\] = \(select auth\.uid\(\)\)::text/i);
   const client = read('src/lib/auth.ts');
-  assert.match(client, /upload\(path,[\s\S]*upsert: true/);
+  assert.match(client, /upload\(path,[\s\S]*upsert: false/);
+  assert.match(client, /Crypto\.randomUUID\(\)/);
+  assert.match(client, /update\(\{ avatar_path: path \}\)[\s\S]*\.select\('id'\)\.single\(\)/);
   assert.doesNotMatch(client, /EXPO_PUBLIC_.*(?:SERVICE_ROLE|OPENAI_API_KEY)/i);
 });
 
@@ -60,15 +63,29 @@ test('scheduled execution never trusts a user ID supplied in the request body', 
 test('client Supabase configuration contains no server-only credentials', () => {
   const source = read('src/lib/supabase.ts');
   assert.match(source, /EXPO_PUBLIC_SUPABASE_ANON_KEY/);
+  assert.match(source, /typeof globalThis\.localStorage === 'undefined'/);
+  assert.match(source, /Platform\.OS === 'web' \? webStorage : AsyncStorage/);
   assert.doesNotMatch(source, /SERVICE_ROLE_KEY|OPENAI_API_KEY|COMPOSIO_API_KEY|BROWSERBASE_API_KEY/);
 });
 
-test('Composio routes require a verified bearer token and server-only admin credentials', () => {
-  const backend = read('src/lib/composioBackend.ts');
+test('deployed connection routes use a verified bearer token and server credentials', () => {
+  const backend = read('supabase/functions/agent-run/index.ts');
   assert.match(backend, /SUPABASE_SERVICE_ROLE_KEY/);
-  assert.doesNotMatch(backend, /EXPO_PUBLIC_SUPABASE_KEY|EXPO_PUBLIC_SUPABASE_URL|placeholder-key|placeholder\.supabase\.co/);
   assert.match(backend, /auth\.getUser\(token\)/);
+  assert.match(backend, /resolveUser\(req, supabase\)/);
   assert.doesNotMatch(backend, /return \{\s*userId:\s*bodyUserId/);
+});
+
+test('tool connections use the authenticated deployed Edge Function', () => {
+  const service = read('src/services/tools.ts');
+  assert.match(service, /supabase.functions.invoke\('agent-run'/);
+  assert.match(service, /mode: 'tools_catalog'/);
+  assert.match(service, /if \(!match \|\| !token\)/);
+  const connections = read('supabase/functions/_shared/connections.ts');
+  assert.match(connections, /account.user_id === userId/);
+  assert.match(connections, /api\('connected_accounts\/link', 'POST', \{ auth_config_id: tool\.composio_auth_config_id, user_id: userId/);
+  assert.match(read('supabase/functions/_shared/callbacks.ts'), /TOOL_CALLBACK_URLS/);
+  assert.doesNotMatch(service, /http:\/\/localhost:8081/);
 });
 
 test('the app exposes Google OAuth only and protects signed-in routes', () => {
@@ -76,10 +93,15 @@ test('the app exposes Google OAuth only and protects signed-in routes', () => {
   const callback = read('src/app/auth/callback.tsx');
   const redirect = read('src/lib/authRedirect.ts');
   const tabs = read('src/app/(tabs)/_layout.tsx');
+  const appConfig = JSON.parse(read('app.json'));
   assert.match(welcome, /signInWithOAuth\(\{[\s\S]*provider: 'google'/);
   assert.match(welcome, /hasGoogleIdentity\(session\.user\)/);
+  assert.match(welcome, /Linking\.createURL\('auth\/callback'\)/);
+  assert.equal(appConfig.expo.scheme, 'tarsai');
   assert.doesNotMatch(welcome, /signInWithPassword|signInWithOtp|verifyOtp|resetPasswordForEmail|Email and password|Phone and SMS/);
-  assert.match(callback, /identity\.provider === 'google'/);
+  assert.match(callback, /const isGoogle = session\?\.user\.app_metadata\?\.provider === 'google'/);
+  assert.match(callback, /if \(!session \|\| !isGoogle\)/);
+  assert.match(callback, /await supabase\.auth\.signOut\(\)/);
   assert.match(redirect, /callbackExchanges\.get\(url\)/);
   assert.match(redirect, /exchangeCodeForSession\(code\)/);
   assert.match(tabs, /identity\.provider === 'google'/);

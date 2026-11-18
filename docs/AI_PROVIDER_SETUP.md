@@ -1,24 +1,19 @@
-# AI provider setup
+# AI and integration setup
 
-The mobile app calls the authenticated Supabase `chat` Edge Function. Provider credentials are read only by that server function; never use an `EXPO_PUBLIC_` variable for an AI key.
+Current operations, provider selection and required dashboard actions are documented in [Provider operations](PROVIDER_OPERATIONS.md). With the owner's explicit approval on 17 November, Gemini remains primary and is configured as `gemini-3.5-flash-lite` after repeated 3.6 Flash high-demand failures. No automatic provider/model fallback occurs. Earlier reports using 3.6 or 3.1 are historical, not the current configuration.
 
-## Chat provider
+The app calls the existing project's authenticated `chat` and `agent-run` Edge Functions. Provider credentials remain server-only. Replies use genuine incremental SSE, cancellation and request-ID-based persistence/retry recovery. Completed replies are saved once; interrupted streams are not labeled completed.
 
-The current `chat` function uses Gemini only. Set `GEMINI_API_KEY` and optionally `GEMINI_MODEL=gemini-2.5-flash` as Supabase Edge Function secrets. It does not read `AI_PROVIDER` and does not fall back to OpenAI. Gemini model availability and quota depend on the Google account and region. Review current [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing), [billing](https://ai.google.dev/gemini-api/docs/billing), and [terms](https://ai.google.dev/gemini-api/terms) before choosing a tier.
+Current Gemini tests returned real HTTP 200 text, stream, structured JSON and function calls. Provider demand also caused HTTP 503 and timeouts; account quota errors remain explicit. Availability does not establish a free-tier allocation. See the [current delivery evidence](DELIVERY_2026-11-16.md).
 
-## Scheduled task summaries
+Composio uses the existing Platform configs and stable user-scoped sessions. A fresh link is generated per attempt; Connected requires verified ACTIVE status. API reads are preferred to browser automation. Existing Browserbase is retained for read-only public navigation, extraction and short-lived live views; it cannot log in, purchase, execute model-supplied JavaScript or submit forms. Search supports optional SearXNG/Brave APIs; the current Browserbase fallback remains until an API endpoint/key is configured.
 
-The existing `agent-run` scheduled chat-task flow can use OpenAI to draft task summaries. This is separate from chat. Set `OPENAI_API_KEY` and optionally `OPENAI_MODEL=gpt-4.1-mini` as server secrets only if enabling that flow. OpenAI API usage is billed separately from ChatGPT plans; review current [API pricing](https://developers.openai.com/api/docs/pricing).
-
-## Set secrets and deploy
-
-From a linked Supabase project, configure the selected provider and the service-role key used by authenticated server code:
+Deploy to the existing project:
 
 ```powershell
-npx supabase secrets set GEMINI_API_KEY=YOUR_KEY GEMINI_MODEL=gemini-2.5-flash SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
-npx supabase functions deploy chat
+npx --no-install supabase functions deploy chat agent-run --project-ref bdswodobwesadjedzhfg --use-api
+node scripts/database/provider-health.cjs --use-vscode-connection --diagnostics --case=stream
+node scripts/database/provider-health.cjs --use-vscode-connection --browser-probe
 ```
 
-If you enable scheduled AI task summaries, also set `OPENAI_API_KEY=YOUR_KEY OPENAI_MODEL=gpt-4.1-mini`. Set server secrets in the Supabase dashboard or CLI; do not paste actual values into source, documentation, issue reports, or this chat. After deployment, inspect Edge Function logs for correlation IDs and error codes. The chat function intentionally avoids logging prompt or response text.
-
-This function is a text chat endpoint. It has no live web access, streaming, or external action execution. The database rate check is per-user but can be approximate during concurrent requests; do not treat it as a billing-grade quota.
+Diagnostics require the private scheduler secret and never return credentials or response contents. Never use `--sync-provider-keys` to overwrite a corrected remote credential from a stale local file.

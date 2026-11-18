@@ -3,6 +3,7 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "strict": true,
+    "allowImportingTsExtensions": true,
     "paths": {
       "@/*": [
         "./src/*"
@@ -21,6 +22,7 @@
   "exclude": [
     "supabase/functions",
     "references",
+    "muse-ai-mobile-app-clone-reference",
     "node_modules"
   ]
 }

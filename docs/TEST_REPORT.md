@@ -1,20 +1,36 @@
-# Verification report — October 24, 2026
+# Verification reports
 
-## Local commands
+## Current release check — 18 November 2026
 
-| Command | Result |
+See [actual release verification and explicit remaining gaps](RELEASE_VERIFICATION_2026-11-18.md) and [deployment plan](DEPLOYMENT_PLAN.md). All 111 automated tests and all three platform JS/static exports pass. Current live provider and multimodal checks are recorded separately from historical results and untested native-device behavior.
+
+## Current report — 16–17 November 2026
+
+See [current actual verification and blockers](DELIVERY_2026-11-16.md) and [successful Gemini post-tool final replies](GEMINI_POST_TOOL_FIX_2026-11-17.md). Owner-approved Gemini 3.5 Flash-Lite now passes actual Trello and four-service final-response tests with saved replies. Free Maps and Browserbase live view passed actual UI tests. Reddit is rate-limited and Instagram has an account-type restriction; physical-device acceptance remains blocked. Older reports below are historical, not the current release verdict.
+
+## Historical report — 2026-10-26
+
+| Check | Result |
 | --- | --- |
-| `npm run typecheck` | PASS |
-| `npm run lint` | PASS |
-| `npm test` | PASS: 7 static security/migration tests, including Google-only sign-in and protected-route checks. |
-| `npx expo config --type public` | PASS: resolved scheme is `tarsai`, Expo SDK 58. |
-| `npx expo export --platform all --max-workers 1` | BLOCKED: Metro hit Windows `EMFILE` while opening a file in the Hugeicons package, including with one worker. |
-| `npm audit --omit=dev` | Reports four high-severity transitive findings through Expo CLI → `node-forge@1.4.0`. [The advisory](https://github.com/advisories/GHSA-86w9-cpqp-85rv) lists affected versions through 1.4.0 and no patched release; the findings are in build tooling, and the audit offered only an incompatible Expo 44 downgrade. No forced downgrade or unverified override was applied. |
+| App TypeScript | PASS: npm run typecheck |
+| Actual Edge source against pinned supabase-js types | PASS: npm run typecheck:edge |
+| ESLint | PASS: npm run lint |
+| Unit/source regression suite | PASS: 12 tests; browser URL/private-address guards, provider error handling, unknown write-tool rejection, RLS/schema/auth/retry contracts |
+| Android, iOS and static web export | PASS: npx expo export --platform all --max-workers 1, with TEMP/TMP pointing to D:\TARS\.expo\temp |
+| Live migration history | PASS: all five versions read back from the existing project, including Composio session mapping |
+| Original row preservation | PASS: baseline original-column fingerprints and counts match; profiles remain 2 rows |
+| Live owner isolation / DB operations | PASS: eight grouped checks, all test writes rolled back |
+| Real scheduled generation | PASS: pg_cron → pg_net → deployed agent-run → Gemini → one persisted reply; next run and lease verified |
+| Real Browserbase read | PASS: example.com title/text returned; session released |
+| Real Gemini browser-agent execution | PASS: model called browse_page; completed tool record and response persisted; tagged fixtures removed |
+| Composio authentication and reads | PASS: three authorized integrations; real SDK and deployed Gemini reads with log IDs; see COMPOSIO_SETUP.md |
+| npm audit --omit=dev | FAIL: 5 high transitive findings in Expo CLI's node-forge/Zod dependencies |
+| Mobile Google OAuth / device UX / push | NOT EXECUTED in this run |
 
-## Coverage and limitations
+The export warns that retained legacy +api.ts routes are excluded by static web output. App connection requests now use the deployed Supabase Edge Function, so the core connection flow does not depend on those routes.
 
-Tests inspect security-critical source and SQL patterns. They do not execute PostgreSQL migrations, call a real Supabase project, invoke an AI provider, or exercise the app on Android/iOS. The Edge Function was not deployed or type-checked with Deno locally. Google OAuth has not been exercised on device. Browserbase and Composio action execution is blocked; only Composio connection status lookup is exposed, and needs deployed server credentials.
+Live database details and exact commands are in [LIVE_DATABASE_REPORT.md](LIVE_DATABASE_REPORT.md). SQL role checks are not a replacement for testing an authenticated mobile session. Unit provider/browser boundaries are controlled; they are distinct from the separately completed real provider tests. No customer values, access tokens or secret keys are included in reports.
 
-The supplied Supabase screenshots indicate the live project is missing columns/table that the app expected. The migration is additive and preserves `public."Users"` rows, but must still be reviewed and applied to the intended project. After deployment, verify Google sign-in and callback restoration, profile provisioning, owner isolation, main/new thread creation, and message retry after provider failure with real accounts.
+## Reference validation (earlier inspection)
 
-No secrets or live customer data were printed by the verification commands. The local `.env` is ignored by Git and must remain local; set provider/service-role keys only as Supabase Edge Function secrets.
+The independent Muse clone is clean at b1df0365e57dfbc4324da84c33f2c4e0db865a82. Its normal npm ci failed peer compatibility; --legacy-peer-deps --ignore-scripts installed dependencies for inspection. TypeScript and Expo configuration passed. Reference lint was unavailable because ESLint was absent. Reference web export did not finish and browser interaction was not verified. See [comparison](REFERENCE_COMPARISON.md) for ZIP and source findings.

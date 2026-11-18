@@ -1,17 +1,21 @@
+import { AccessibleModal as Modal } from '@/components/common/AccessibleModal';
 /**
  * SidebarDrawer Component
  *
  * Fullscreen sliding drawer interface providing session management:
  * 1. Top bar: Agent title & right arrow dismissal button
- * 2. Main Chat: Quick jump capsule back to primary conversation
- * 3. Side Chats: Filterable list of parallel conversation threads with unread indicators
+ * 2. Recents: all conversations in chronological order
+ * 3. Search, exact conversation selection and unread indicators
  * 4. Bottom Toolbar: Settings gear shortcut, search filter input, and compose new chat button
  */
 
-import { Colors } from '@/constants/colors';
+import { useAppTheme } from '@/context/ThemeContext';
+import type { ColorPalette } from '@/constants/colors';
+
 import { showToast } from '@/context/ToastContext';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
-import { CreateNewThread, DeleteThread, GetAllUserThreads } from '@/services/chatHistory';
+import { CreateNewThread, DeleteThread, RenameThread, GetAllUserThreads } from '@/services/chatHistory';
+import {KeyboardFormLayout} from './KeyboardFormLayout';
 import { SideChatItem } from '@/types';
 import {
   ArrowRight01Icon,
@@ -19,13 +23,12 @@ import {
   Edit02Icon,
   Search01Icon,
   Settings01Icon,
-} from '@hugeicons/core-free-icons';
+} from '@/constants/icons';
 import { HugeiconsIcon } from '@hugeicons/react-native';
-import { useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import { useGlobalSearchParams, useRouter } from 'expo-router';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  Modal,
-  Alert,
+  ActivityIndicator,
   Platform,
   ScrollView,
   StyleSheet,
@@ -33,26 +36,19 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  Pressable,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { MotionPanel } from './MotionPanel';
 
 export interface SidebarDrawerProps {
   /** Visibility state of the drawer modal */
   visible: boolean;
-  /** Active chat session identifier */
-  activeChatId?: string;
-  /** Active agent name displayed in drawer header */
-  agentName?: string;
   /** Callback fired to close the drawer */
   onClose: () => void;
-  /** Callback fired when a conversation item is tapped */
-  onSelectChat: (chatTitle: string) => void;
-  /** Callback fired to initiate a clean chat session */
-  onNewChat: () => void;
   /** Callback fired to navigate directly to settings */
   onOpenSettings?: () => void;
-  /** Callback fired to clear all side chat topics */
-  onClearSideChats?: () => void;
 }
 
 /**
@@ -60,101 +56,92 @@ export interface SidebarDrawerProps {
  */
 export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({
   visible,
-  activeChatId,
-  agentName = 'TARS',
   onClose,
-  onSelectChat,
-  onNewChat,
   onOpenSettings,
-  onClearSideChats,
 }) => {
+  const { colors: Colors } = useAppTheme();
+  const styles = createStyles(Colors);
   const [searchQuery, setSearchQuery] = useState('');
-  const [userEmail, setUserEmail] = useState<string | null>(null);
   const router = useRouter()
-  const [sideChatList, setSideChatList] = useState<SideChatItem[]>([])
-  const [mainChatThread, setMainChatThread] = useState<SideChatItem | null>(null)
-  // Filter side chat topics by active search query
-  const filteredChats = sideChatList.filter((chat) =>
+  const params=useGlobalSearchParams<{thread_id?:string|string[]}>();
+  const selected=Array.isArray(params.thread_id)?params.thread_id[0]:params.thread_id;
+  const [chats, setChats] = useState<SideChatItem[]>([]);
+  const [loading,setLoading]=useState(false),[error,setError]=useState('');
+  const [deleteTarget,setDeleteTarget]=useState<SideChatItem|null>(null);
+  const [renameTarget,setRenameTarget]=useState<SideChatItem|null>(null),[renameTitle,setRenameTitle]=useState(''),[renameError,setRenameError]=useState('');
+  const [busy,setBusy]=useState(false),lock=useRef(false);
+  const filteredChats = chats.filter((chat) =>
     chat.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
 
   useEffect(() => {
-    const loadUser = async () => {
-      const data = await supabase.auth.getSession();
-      const userEmail = data?.data?.session?.user?.email;
-      setUserEmail(userEmail ?? null);
-    }
-    loadUser()
-  }, [])
-
-  const GetAllUserChatThreads = useCallback(async () => {
-    const data = await GetAllUserThreads(userEmail ?? '');
-
-    const mainChat = data.find((thread: any) => thread.type === 'main');
-    const sideChats: SideChatItem[] = data
-      ?.filter((thread: any) => thread.type === 'side')
-      ?.map((thread: any) => ({
+    if(!visible)return;
+    let active=true;
+    setLoading(true);setError('');setChats([]);
+    void GetAllUserThreads('').then(data=>{
+      if(!active)return;
+      setChats(data.map((thread: any) => ({
         id: thread.id,
-        title: thread.title,
+        title: thread.title || 'New conversation',
         hasUnreadDot: thread.has_unread_updates ?? false
-      })) as SideChatItem[];
-    setSideChatList(sideChats)
-    setMainChatThread(mainChat)
-  }, [userEmail]);
+      })) as SideChatItem[]);
+    }).catch(()=>{if(active)setError('Conversations could not load. Close Recents and try again.');}).finally(()=>{if(active)setLoading(false);});
+    const listener=isSupabaseConfigured?supabase.auth.onAuthStateChange((event)=>{if(event==='SIGNED_OUT'&&active){setChats([]);onClose();}}):null;
+    return()=>{active=false;listener?.data.subscription.unsubscribe();};
+  }, [visible,onClose]);
 
-  useEffect(() => {
-    if (!isSupabaseConfigured || userEmail) void GetAllUserChatThreads();
-  }, [userEmail, GetAllUserChatThreads])
-
-
-
-  const CreateNewSideChat = async () => {
-    //Create a new side chat and close the drawer
-
+  const createConversation = async () => {
+    if(lock.current)return;lock.current=true;setBusy(true);
     try {
-    const sideThread = await CreateNewThread(userEmail ?? '', 'side', 'New conversation');
-
+    const thread = await CreateNewThread('');
     router.replace({
       pathname: '/(tabs)/chat',
       params: {
-        thread_id: sideThread?.id,
-        chatType: 'side'
+        thread_id: thread.id,
       }
     })
-    void GetAllUserChatThreads();
     onClose();
     } catch {
       showToast('Could not start a new conversation.');
-    }
-    // onNewChat();
+    } finally {lock.current=false;setBusy(false);}
   }
 
   const deleteThread = async (threadId: string) => {
+    if(lock.current)return;lock.current=true;setBusy(true);
     try {
       await DeleteThread(threadId);
-      await GetAllUserChatThreads();
+      setChats(rows=>rows.filter(row=>row.id!==threadId));setDeleteTarget(null);
+      if(selected===threadId)router.replace('/(tabs)/chat');
     } catch {
       showToast('Could not delete this conversation.');
-    }
+    } finally {lock.current=false;setBusy(false);}
   }
 
+  const rename=async()=>{
+    if(lock.current||!renameTarget)return;lock.current=true;setBusy(true);setRenameError('');
+    try{await RenameThread(renameTarget.id,renameTitle);setChats(rows=>rows.map(row=>row.id===renameTarget.id?{...row,title:renameTitle.replace(/\s+/g,' ').trim()}:row));setRenameTarget(null);}
+    catch(cause){setRenameError(cause instanceof Error?cause.message:'The conversation could not be renamed.');}
+    finally{lock.current=false;setBusy(false);}
+  };
   return (
     <Modal
       visible={visible}
       transparent
       animationType="fade"
       onRequestClose={onClose}>
-      <View style={styles.modalContainer}>
+      <GestureHandlerRootView style={styles.modalContainer}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel="Dismiss conversations" />
+        <MotionPanel onDismiss={onClose} style={{ flex: 1, width: '90%', maxWidth: 390, backgroundColor: Colors.background }}>
         {/* Fullscreen white sidebar with safe area */}
         <SafeAreaView style={styles.safeContainer} edges={['top', 'bottom', 'left', 'right']}>
           {/* Top Bar: Center Name + Right Arrow Button */}
           <View style={styles.header}>
             <View style={styles.headerSideSpacer} />
 
-            <Text style={styles.headerTitle}>{agentName}</Text>
+            <Text style={styles.headerTitle}>Recents</Text>
 
-            <TouchableOpacity
+            <TouchableOpacity accessibilityRole="button"
               style={styles.circleBtn}
               onPress={onClose}
               activeOpacity={0.7}
@@ -168,61 +155,33 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({
             </TouchableOpacity>
           </View>
 
-          {/* Main Chat Capsule Button */}
-          <View style={styles.mainChatWrapper}>
-            <TouchableOpacity
-              style={styles.mainChatCapsule}
-              onPress={() => {
-                router.replace({
-                  pathname: '/(tabs)/chat',
-                  params: {
-                    thread_id: mainChatThread?.id,
-                    chatType: 'main'
-                  }
-                })
-                // onSelectChat('Main chat');
-                onClose();
-              }}
-              activeOpacity={0.8}>
-              <Text style={styles.mainChatText}>Main chat</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Thin Divider Line */}
           <View style={styles.divider} />
-
-          {/* Side Chats Section */}
           <ScrollView
             style={styles.scrollArea}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}>
-            {/* Section Header */}
-            <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionHeaderText}>Side chats</Text>
-
-
-            </View>
-
-            {/* Side Chats List */}
-            {filteredChats.map((chat, index) => (
-              <View key={chat.id}>
-                <TouchableOpacity
-                  style={styles.chatRow}
+            {loading?<ActivityIndicator accessibilityLabel="Loading conversations" color={Colors.primary}/>:null}
+            {error?<Text accessibilityRole="alert" style={styles.noChats}>{error}</Text>:null}
+            {filteredChats.map((chat) => (
+              <View key={chat.id} style={[styles.chatRow,selected===chat.id&&{backgroundColor:Colors.surfaceMuted}]}>
+                <TouchableOpacity accessibilityRole="button"
+                  style={{flex:1,minHeight:44,justifyContent:'center'}}
+                  aria-pressed={selected===chat.id} accessibilityState={{selected:selected===chat.id}}
+                  accessibilityLabel={`Open conversation: ${chat.title}`}
                   onPress={() => {
                     router.replace({
                       pathname: '/(tabs)/chat',
                       params: {
                         thread_id: chat.id,
-                        chatType: 'side'
                       }
                     })
-                    // onSelectChat(chat.title);
                     onClose();
                   }}
                   activeOpacity={0.7}>
                   <Text style={styles.chatRowText} numberOfLines={1}>
                     {chat.title}
                   </Text>
+                </TouchableOpacity>
                   <View style={{
                     display: 'flex',
                     flexDirection: 'row',
@@ -231,16 +190,13 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({
                   }}>
                     {/* Blue Indicator Dot if unread */}
                     {chat.hasUnreadDot && <View style={styles.blueDot} />}
-                    <TouchableOpacity
+                    <TouchableOpacity accessibilityRole="button" style={styles.trashBtn} disabled={busy} accessibilityLabel={`Rename conversation: ${chat.title}`} onPress={event=>{event.stopPropagation();setRenameTarget(chat);setRenameTitle(chat.title);setRenameError('');}}><HugeiconsIcon icon={Edit02Icon} size={18} color={Colors.iconMuted}/></TouchableOpacity>
+                    <TouchableOpacity accessibilityRole="button"
                       style={styles.trashBtn}
-                      onPress={() => {
-                        Alert.alert('Delete conversation?', `“${chat.title}” and its messages will be deleted.`, [
-                          { text: 'Cancel', style: 'cancel' },
-                          { text: 'Delete', style: 'destructive', onPress: () => { void deleteThread(chat.id); } },
-                        ]);
-                      }}
+                      disabled={busy}
+                      onPress={(event) => { event.stopPropagation();setDeleteTarget(chat); }}
                       activeOpacity={0.7}
-                      accessibilityLabel="Clear side chats">
+                      accessibilityLabel={`Delete conversation: ${chat.title}`}>
                       <HugeiconsIcon
                         icon={Delete02Icon}
                         size={20}
@@ -249,16 +205,15 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({
                       />
                     </TouchableOpacity>
                   </View>
-                </TouchableOpacity>
               </View>
             ))}
-            {filteredChats.length === 0 ? <Text style={styles.noChats}>{searchQuery ? 'No conversations match your search.' : 'Your conversations will appear here.'}</Text> : null}
+            {!loading&&!error&&filteredChats.length === 0 ? <Text style={styles.noChats}>{searchQuery ? 'No conversations match your search.' : 'Your conversations will appear here.'}</Text> : null}
           </ScrollView>
 
           {/* Bottom Toolbar: Settings Gear (Left) + Search (Center) + Compose (Right) */}
           <View style={styles.bottomToolbar}>
             {/* Settings Gear Button */}
-            <TouchableOpacity
+            <TouchableOpacity accessibilityRole="button"
               style={styles.circleBtn}
               onPress={() => {
                 showToast('Settings');
@@ -285,7 +240,7 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({
               />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Search"
+                accessibilityLabel="Search conversations" placeholder="Search"
                 placeholderTextColor={Colors.iconMuted}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
@@ -293,12 +248,10 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({
             </View>
 
             {/* New Chat Compose Button */}
-            <TouchableOpacity
+            <TouchableOpacity accessibilityRole="button"
               style={styles.circleBtn}
-              onPress={() => {
-                CreateNewSideChat()
-
-              }}
+              disabled={busy}
+              onPress={() => { void createConversation(); }}
               activeOpacity={0.7}
               accessibilityLabel="New chat">
               <HugeiconsIcon
@@ -310,15 +263,31 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({
             </TouchableOpacity>
           </View>
         </SafeAreaView>
-      </View>
+        </MotionPanel>
+        <Modal visible={Boolean(renameTarget)} transparent animationType="slide" onRequestClose={()=>{if(!busy)setRenameTarget(null);}}>
+          <KeyboardFormLayout dismissDisabled={busy} onDismiss={()=>setRenameTarget(null)} backdropStyle={{backgroundColor:Colors.overlay}} cardStyle={{backgroundColor:Colors.surface,padding:24,borderTopLeftRadius:24,borderTopRightRadius:24}} footer={<View style={{flexDirection:'row',justifyContent:'space-between'}}><Pressable accessibilityRole="button" disabled={busy} onPress={()=>setRenameTarget(null)} style={{minHeight:44,justifyContent:'center'}}><Text style={{color:Colors.textLink,fontSize:17}}>Cancel</Text></Pressable><Pressable accessibilityRole="button" disabled={busy} onPress={()=>void rename()} style={{minHeight:44,justifyContent:'center'}}><Text style={{color:Colors.textLink,fontSize:17}}>{busy?'Saving…':'Save name'}</Text></Pressable></View>}>
+            <Text accessibilityRole="header" style={{color:Colors.textPrimary,fontSize:24,marginBottom:16}}>Rename conversation</Text>
+            <TextInput accessibilityLabel="Conversation name" value={renameTitle} onChangeText={setRenameTitle} maxLength={120} editable={!busy} style={{color:Colors.textPrimary,fontSize:17,padding:14,borderWidth:1,borderColor:Colors.border,borderRadius:12}}/>
+            {renameError?<Text accessibilityRole="alert" style={{color:Colors.error,marginTop:12}}>{renameError}</Text>:null}
+          </KeyboardFormLayout>
+        </Modal>
+        <Modal visible={Boolean(deleteTarget)} transparent animationType="fade" onRequestClose={()=>{if(!busy)setDeleteTarget(null);}}>
+          <View style={{flex:1,backgroundColor:Colors.overlay,justifyContent:'center',padding:24}}><View style={{backgroundColor:Colors.surface,padding:24,borderRadius:20,gap:16}}>
+            <Text accessibilityRole="header" style={{color:Colors.textPrimary,fontSize:20,fontWeight:'600'}}>Delete conversation?</Text>
+            <Text style={{color:Colors.textSecondary,fontSize:17,lineHeight:24}}>“{deleteTarget?.title}” and its messages will be deleted.</Text>
+            <Pressable disabled={busy} onPress={()=>setDeleteTarget(null)} style={{minHeight:44,justifyContent:'center'}} accessibilityRole="button"><Text style={{color:Colors.textLink,fontSize:17}}>Cancel</Text></Pressable>
+            <Pressable disabled={busy} onPress={()=>{if(deleteTarget)void deleteThread(deleteTarget.id);}} style={{minHeight:44,justifyContent:'center'}} accessibilityRole="button"><Text style={{color:Colors.error,fontSize:17}}>{busy?'Deleting…':'Delete'}</Text></Pressable>
+          </View></View>
+        </Modal>
+      </GestureHandlerRootView>
     </Modal>
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ColorPalette) => StyleSheet.create({
   modalContainer: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: Colors.overlay,
   },
   safeContainer: {
     flex: 1,
@@ -349,7 +318,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#F0F0F2',
+    borderColor: Colors.borderLight,
     ...Platform.select({
       ios: {
         shadowColor: Colors.black,
@@ -365,27 +334,9 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  mainChatWrapper: {
-    paddingHorizontal: 20,
-    marginTop: 8,
-    marginBottom: 16,
-  },
-  mainChatCapsule: {
-    width: '100%',
-    height: 54,
-    backgroundColor: Colors.tabActiveBg, // #E6E8EA
-    borderRadius: 27,
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-  },
-  mainChatText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.iconDark,
-  },
   divider: {
     height: 1,
-    backgroundColor: '#F0F0F2',
+    backgroundColor: Colors.borderLight,
     width: '100%',
   },
   scrollArea: {
@@ -408,8 +359,8 @@ const styles = StyleSheet.create({
     color: Colors.iconMuted, // #8E8E93 / #9E9E9E
   },
   trashBtn: {
-    width: 32,
-    height: 32,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -431,7 +382,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#0066FF',
+    backgroundColor: Colors.primary,
   },
   bottomToolbar: {
     flexDirection: 'row',
@@ -446,9 +397,9 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#F5F6F8',
+    backgroundColor: Colors.surfaceInput,
     borderWidth: 1,
-    borderColor: '#ECECEC',
+    borderColor: Colors.border,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,

@@ -2,7 +2,7 @@
  * ToolCard Component ('src/components/tools/ToolCard.tsx')
  *
  * List item row for tool connections:
- * - Tool Logo/Icon image directly from logo_url / icon_url in database using expo-image
+ * - Bundled provider marks, with a backend logo URL fallback for unknown providers
  * - Tool Name and connected status / account subtitle
  * - Connect / Pending / Connected / Manage / Disconnect buttons
  */
@@ -14,14 +14,18 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  Image,
 } from 'react-native';
 import { HugeiconsIcon } from '@hugeicons/react-native';
-import { Settings02Icon } from '@hugeicons/core-free-icons';
-import { Colors } from '@/constants/colors';
+import { Settings02Icon } from '@/constants/icons';
+import { useAppTheme } from '@/context/ThemeContext';
+import type { ColorPalette } from '@/constants/colors';
+
 import { ToolWithConnection } from '@/types/tools';
+import { getProvider } from '@/constants/providers';
+import { ProviderLogo } from './ProviderLogo';
 
 export interface ToolCardProps {
+  attempt?: { url?: string; expiresAt?: string; error?: string };
   tool: ToolWithConnection;
   isLoading?: boolean;
   onConnect?: (tool: ToolWithConnection) => void;
@@ -35,9 +39,13 @@ export const ToolCard: React.FC<ToolCardProps> = ({
   onConnect,
   onDisconnect,
   onManage,
+  attempt,
 }) => {
-  // Use logo_url or icon_url from database table
-  const imageUrl = tool.icon_url || tool.logo_url;
+  const { colors: Colors } = useAppTheme();
+  const styles = createStyles(Colors);
+  // Match the backend toolkit ID to the shared brand registry.
+  const provider = getProvider(tool.toolkit_slug, tool.slug, tool.id, tool.name);
+  const name = provider?.name || (tool.toolkit_slug==='google_maps'||tool.id==='google_maps'?'Google Maps':tool.name || tool.toolkit_slug || tool.slug);
   const isConnected = tool.status === 'connected';
   const isPending = tool.status === 'pending';
   const isFailed = tool.status === 'failed';
@@ -50,32 +58,24 @@ export const ToolCard: React.FC<ToolCardProps> = ({
     subtitle = 'Authorization pending...';
   } else if (isFailed) {
     subtitle = 'Connection failed. Tap retry.';
+  } else if (tool.enabled === false) {
+    subtitle = tool.availability_reason || 'OAuth setup required';
+  } else if (tool.status === 'revoked') {
+    subtitle = tool.availability_reason || 'Authorization expired. Reconnect.';
   }
 
   return (
     <View style={styles.listRow}>
       {/* 1. Tool Logo Image from DB */}
       <View style={styles.logoWrapper}>
-        {imageUrl ? (
-          <Image
-            source={{ uri: imageUrl }}
-            style={styles.logoImage}
-            resizeMode="contain"
-          />
-        ) : (
-          <View style={styles.initialFallback}>
-            <Text style={styles.initialText}>
-              {tool.name ? tool.name.charAt(0).toUpperCase() : 'T'}
-            </Text>
-          </View>
-        )}
+        <ProviderLogo identifiers={[tool.toolkit_slug, tool.slug, tool.id]} name={name} uri={tool.icon_url || tool.logo_url} />
       </View>
 
       {/* 2. Tool Name & Subtitle / Status */}
       <View style={styles.infoWrapper}>
         <View style={styles.nameRow}>
           <Text style={styles.toolName} numberOfLines={1}>
-            {tool.name}
+            {name}
           </Text>
           {isConnected && <View style={styles.connectedDot} />}
           {isPending && <View style={styles.pendingDot} />}
@@ -89,10 +89,12 @@ export const ToolCard: React.FC<ToolCardProps> = ({
               isFailed && styles.failedSubtitleText,
               isPending && styles.pendingSubtitleText,
             ]}
-            numberOfLines={1}>
+            numberOfLines={tool.enabled === false ? 3 : 1}>
             {subtitle}
           </Text>
         )}
+        {attempt?.error ? <Text accessibilityRole="alert" style={[styles.attemptText, { color: Colors.error }]}>{attempt.error}</Text> : null}
+        {attempt?.url ? <><Text selectable numberOfLines={2} style={[styles.attemptText, { color: Colors.textLink }]}>{attempt.url}</Text><Text style={[styles.attemptText, { color: Colors.textMuted }]}>New authorization link · Expires {attempt.expiresAt ? new Date(attempt.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'soon'}. Return here after consent.</Text></> : null}
       </View>
 
       {/* 3. Action Buttons Section */}
@@ -105,8 +107,8 @@ export const ToolCard: React.FC<ToolCardProps> = ({
           <View style={styles.connectedActions}>
             {/* Manage Option */}
             {onManage && (
-              <TouchableOpacity
-                style={styles.manageButton}
+              <TouchableOpacity accessibilityRole="button"
+                accessibilityLabel={`Manage ${name}`} style={styles.manageButton}
                 onPress={() => onManage(tool)}
                 activeOpacity={0.7}>
                 <HugeiconsIcon
@@ -119,16 +121,16 @@ export const ToolCard: React.FC<ToolCardProps> = ({
             )}
 
             {/* Disconnect Option */}
-            <TouchableOpacity
-              style={styles.disconnectButton}
+            <TouchableOpacity accessibilityRole="button"
+              accessibilityLabel={`Disconnect ${name}`} style={styles.disconnectButton}
               onPress={() => onDisconnect?.(tool)}
               activeOpacity={0.7}>
               <Text style={styles.disconnectButtonText}>Disconnect</Text>
             </TouchableOpacity>
           </View>
         ) : isPending ? (
-          <TouchableOpacity
-            style={styles.pendingButton}
+          <TouchableOpacity accessibilityRole="button"
+            accessibilityLabel={`Connect ${name} again`} style={styles.pendingButton}
             onPress={() => onConnect?.(tool)}
             activeOpacity={0.7}>
             <ActivityIndicator
@@ -136,21 +138,22 @@ export const ToolCard: React.FC<ToolCardProps> = ({
               color={Colors.warning}
               style={{ marginRight: 6 }}
             />
-            <Text style={styles.pendingButtonText}>Pending...</Text>
+            <Text style={styles.pendingButtonText}>Connect again</Text>
           </TouchableOpacity>
         ) : isFailed ? (
-          <TouchableOpacity
-            style={styles.retryButton}
+          <TouchableOpacity accessibilityRole="button"
+            accessibilityLabel={`Retry ${name} connection`} style={styles.retryButton}
             onPress={() => onConnect?.(tool)}
             activeOpacity={0.7}>
             <Text style={styles.retryButtonText}>Retry</Text>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity
-            style={styles.connectButton}
+          <TouchableOpacity accessibilityRole="button"
+            accessibilityLabel={`Connect ${name}`} style={styles.connectButton}
+            disabled={tool.enabled === false}
             onPress={() => onConnect?.(tool)}
             activeOpacity={0.7}>
-            <Text style={styles.connectButtonText}>Connect</Text>
+            <Text style={styles.connectButtonText}>{tool.enabled === false ? tool.availability === 'temporarily_failing' ? 'Retry later' : 'Setup needed' : tool.status === 'revoked' ? 'Reconnect' : 'Connect'}</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -158,13 +161,14 @@ export const ToolCard: React.FC<ToolCardProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ColorPalette) => StyleSheet.create({
+  attemptText: { fontSize: 11, lineHeight: 16, marginTop: 5 },
   listRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 14,
     paddingHorizontal: 16,
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surface,
   },
   logoWrapper: {
     width: 40,
@@ -176,24 +180,9 @@ const styles = StyleSheet.create({
     marginRight: 12,
     overflow: 'hidden',
   },
-  logoImage: {
-    width: 26,
-    height: 26,
-  },
-  initialFallback: {
-    width: '100%',
-    height: '100%',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.primarySubtle,
-  },
-  initialText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.primary,
-  },
   infoWrapper: {
     flex: 1,
+    minWidth: 0,
     marginRight: 10,
   },
   nameRow: {
@@ -201,9 +190,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   toolName: {
-    fontSize: 15.5,
+    flexShrink: 1,
+    fontSize: 17,
     fontWeight: '600',
-    color: Colors.iconDark,
+    color: Colors.textPrimary,
     letterSpacing: -0.2,
   },
   connectedDot: {
@@ -251,8 +241,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   manageButton: {
-    width: 32,
-    height: 32,
+    width: 44,
+    height: 44,
     borderRadius: 9,
     backgroundColor: Colors.surfaceMuted,
     alignItems: 'center',
@@ -261,6 +251,8 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   connectButton: {
+    minHeight: 44,
+    justifyContent: 'center',
     backgroundColor: Colors.primary,
     paddingHorizontal: 16,
     paddingVertical: 7,
@@ -269,9 +261,11 @@ const styles = StyleSheet.create({
   connectButtonText: {
     fontSize: 13.5,
     fontWeight: '700',
-    color: Colors.white,
+    color: Colors.onPrimary,
   },
   pendingButton: {
+    minHeight: 44,
+    justifyContent: 'center',
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: Colors.warningLight,
@@ -287,6 +281,8 @@ const styles = StyleSheet.create({
     color: Colors.warning,
   },
   retryButton: {
+    minHeight: 44,
+    justifyContent: 'center',
     backgroundColor: Colors.primarySubtle,
     paddingHorizontal: 14,
     paddingVertical: 7,
@@ -297,9 +293,11 @@ const styles = StyleSheet.create({
   retryButtonText: {
     fontSize: 13,
     fontWeight: '700',
-    color: Colors.primary,
+    color: Colors.textLink,
   },
   disconnectButton: {
+    minHeight: 44,
+    justifyContent: 'center',
     backgroundColor: Colors.errorLight,
     paddingHorizontal: 12,
     paddingVertical: 7,

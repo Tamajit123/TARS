@@ -2,6 +2,8 @@
 
 TARS is a React Native and Expo mobile app for conversation, ideas, recurring tasks, and activity. It is built for iOS and Android with TypeScript and Expo Router.
 
+Current executed results and release blockers: [16–17 November verification](docs/DELIVERY_2026-11-16.md). Use `npm run start` for local development. Native MapLibre, Google sign-in and device acceptance require a rebuilt development app; Expo Go is only a limited preview.
+
 ## Start now
 
 Windows and macOS can run the offline preview without cloud credentials:
@@ -45,6 +47,6 @@ Read [docs/FEATURE_STATUS.md](docs/FEATURE_STATUS.md) for the honest implementat
 
 ## Reference material and attribution
 
-The Expo Router screen shell, chat layout, drawer, component patterns, and scheduling structure were adapted from the supplied Muse AI mobile clone (MIT license; attribution and license retained in `LICENSE`). `Free.zip` contained overlapping Supabase Edge Function and scheduling materials; those were reviewed and adapted. The separate AI-agent archive was inspected but its older onboarding and screen flows were not used. Original reference archives are kept under `references/` and excluded from future version control.
+The Expo Router screen shell, chat layout, drawer, component patterns, and scheduling structure were adapted from the supplied Muse AI mobile clone (MIT license; attribution and license retained in `LICENSE`). `Free.zip` contained overlapping Supabase Edge Function and scheduling materials; those were reviewed and adapted. The separate AI-agent archive was inspected but its older onboarding and screen flows were not used. Reference checkouts, extracted screenshots, ZIP inspection material, and obsolete Node adapters are preserved outside the app in `D:\TARS-reference-archive-20261026`. See `docs/UI_REPAIR_REPORT.md` for the cleanup manifest.
 
 The reference YouTube video could not be retrieved by the available browser. The supplied codebase explanation was inspected locally and compared with the archived source.

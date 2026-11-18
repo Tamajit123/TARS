@@ -24,6 +24,9 @@ export interface ToolAction {
  * Tool entity stored in Supabase `tools` table
  */
 export interface Tool {
+  availability?: 'ready' | 'connected' | 'configuration_required' | 'unsupported' | 'temporarily_failing' | 'authorization_expired';
+  availability_reason?: string | null;
+  enabled?: boolean;
   id: string;
   name: string;
   slug: string;
@@ -64,6 +67,9 @@ export interface UserToolConnection {
  * Combined tool data returned to the app UI, including tool details and connection status
  */
 export interface ToolWithConnection {
+  availability?: Tool['availability'];
+  availability_reason?: string | null;
+  enabled?: boolean;
   id: string;
   name: string;
   slug: string;
@@ -115,6 +121,10 @@ export interface AgentToolRunLog {
  * Backend API responses for tool connections
  */
 export interface StartConnectionResponse {
+  authConfigId?: string;
+  expiresAt?: string;
+  callbackUrl?: string | null;
+  returnMode?: 'redirect' | 'hosted';
   success: boolean;
   toolId: string;
   toolName: string;
@@ -125,6 +135,8 @@ export interface StartConnectionResponse {
 }
 
 export interface CheckStatusResponse {
+  providerStatus?: string | null;
+  statusMessage?: string | null;
   success: boolean;
   toolId: string;
   status: ToolConnectionStatus;

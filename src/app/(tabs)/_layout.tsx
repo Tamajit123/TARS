@@ -1,3 +1,5 @@
+import {useKeyboardViewport} from '@/hooks/useKeyboardViewport';
+import { IOSTabs } from '@/components/common/IOSTabs';
 /**
  * TabLayout Component ('/(tabs)/_layout.tsx')
  *
@@ -17,30 +19,37 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, Platform, ActivityIndicator } from 'react-native';
 import { Tabs, useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { HugeiconsIcon } from '@hugeicons/react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Comment01Icon,
   File01Icon,
   Idea01Icon,
   CheckmarkSquare02Icon,
   Settings02Icon,
-} from '@hugeicons/core-free-icons';
-import { Colors } from '@/constants/colors';
+} from '@/constants/icons';
+import { useAppTheme } from '@/context/ThemeContext';
+import type { ColorPalette } from '@/constants/colors';
+
 import {
   AppHeader,
   SidebarDrawer,
   SettingsMenuModal,
   EditAgentModal,
 } from '@/components/common';
-import { showToast } from '@/context/ToastContext';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
+import { MaterialSurface } from '@/components/common/MaterialSurface';
+import { NativeIcon } from '@/components/common/NativeIcon';
+import { selectionFeedback } from '@/lib/haptics';
 
 const PROFILE_KEY = 'tars:agent-profile:v1';
 const OFFLINE_MODE_KEY = 'tars:offline-preview';
 type AgentProfile = { name: string; subtitle: string; icon: string; color: string };
 
 export default function TabLayout() {
+  const { colors: Colors } = useAppTheme();
+  const insets = useSafeAreaInsets();
+  const keyboardViewport=useKeyboardViewport();
+  const styles = createStyles(Colors, insets.bottom);
   const router = useRouter();
   const [accessState, setAccessState] = useState<'checking' | 'allowed'>('checking');
 
@@ -83,8 +92,8 @@ export default function TabLayout() {
     let active = true;
     const loadProfile = async () => {
       try {
-        const local = await AsyncStorage.getItem(PROFILE_KEY);
         const { data: { user } } = await supabase.auth.getUser();
+        const local = await AsyncStorage.getItem(`${PROFILE_KEY}:${user?.id || 'preview'}`);
         let profile: AgentProfile | null = local ? JSON.parse(local) as AgentProfile : null;
         if (isSupabaseConfigured && user) {
           const { data } = await supabase.from('profiles').select('agent_name,agent_role,agent_avatar,agent_color').eq('id', user.id).maybeSingle();
@@ -122,12 +131,18 @@ export default function TabLayout() {
 
       {/* 2. Expo Router Tabs Viewport */}
       <View style={styles.contentContainer}>
-        <Tabs
+        {Platform.OS === 'ios' ? <IOSTabs /> : <Tabs
+          screenListeners={{ tabPress: () => selectionFeedback() }}
           screenOptions={{
             headerShown: false,
-            tabBarShowLabel: false,
+            animation: 'none',
+            tabBarShowLabel: true,
+            tabBarActiveTintColor: Colors.primary,
+            tabBarInactiveTintColor: Colors.textMuted,
+            tabBarLabelStyle: { fontSize: 11, lineHeight: 14, fontWeight: '500', marginTop: 0 },
+            tabBarBackground: () => <MaterialSurface style={StyleSheet.absoluteFill} />,
             tabBarHideOnKeyboard: true,
-            tabBarStyle: styles.tabBar,
+            tabBarStyle: [styles.tabBar,Platform.OS==='web'&&keyboardViewport.open?{display:'none'}:undefined],
             tabBarItemStyle: styles.tabBarItem,
           }}>
           <Tabs.Screen
@@ -142,12 +157,7 @@ export default function TabLayout() {
               title: 'Chat',
               tabBarIcon: ({ focused }) => (
                 <View style={[styles.iconPill, focused && styles.activeIconPill]}>
-                  <HugeiconsIcon
-                    icon={Comment01Icon}
-                    size={23}
-                    color={Colors.iconDark}
-                    strokeWidth={2}
-                  />
+                  <NativeIcon symbol="bubble.left.and.bubble.right" fallback={Comment01Icon} size={22} color={focused ? Colors.primary : Colors.textMuted} />
                 </View>
               ),
             }}
@@ -158,12 +168,7 @@ export default function TabLayout() {
               title: 'Feed',
               tabBarIcon: ({ focused }) => (
                 <View style={[styles.iconPill, focused && styles.activeIconPill]}>
-                  <HugeiconsIcon
-                    icon={File01Icon}
-                    size={23}
-                    color={Colors.iconDark}
-                    strokeWidth={2}
-                  />
+                  <NativeIcon symbol="tray" fallback={File01Icon} size={22} color={focused ? Colors.primary : Colors.textMuted} />
                 </View>
               ),
             }}
@@ -174,12 +179,7 @@ export default function TabLayout() {
               title: 'Ideas',
               tabBarIcon: ({ focused }) => (
                 <View style={[styles.iconPill, focused && styles.activeIconPill]}>
-                  <HugeiconsIcon
-                    icon={Idea01Icon}
-                    size={23}
-                    color={Colors.iconDark}
-                    strokeWidth={2}
-                  />
+                  <NativeIcon symbol="lightbulb" fallback={Idea01Icon} size={22} color={focused ? Colors.primary : Colors.textMuted} />
                 </View>
               ),
             }}
@@ -187,15 +187,10 @@ export default function TabLayout() {
           <Tabs.Screen
             name="tasks"
             options={{
-              title: 'Task / Goal',
+              title: 'Tasks',
               tabBarIcon: ({ focused }) => (
                 <View style={[styles.iconPill, focused && styles.activeIconPill]}>
-                  <HugeiconsIcon
-                    icon={CheckmarkSquare02Icon}
-                    size={23}
-                    color={Colors.iconDark}
-                    strokeWidth={2}
-                  />
+                  <NativeIcon symbol="checkmark.circle" fallback={CheckmarkSquare02Icon} size={22} color={focused ? Colors.primary : Colors.textMuted} />
                 </View>
               ),
             }}
@@ -206,39 +201,21 @@ export default function TabLayout() {
               title: 'Settings',
               tabBarIcon: ({ focused }) => (
                 <View style={[styles.iconPill, focused && styles.activeIconPill]}>
-                  <HugeiconsIcon
-                    icon={Settings02Icon}
-                    size={23}
-                    color={Colors.iconDark}
-                    strokeWidth={2}
-                  />
+                  <NativeIcon symbol="gearshape" fallback={Settings02Icon} size={22} color={focused ? Colors.primary : Colors.textMuted} />
                 </View>
               ),
             }}
           />
-        </Tabs>
+        </Tabs>}
       </View>
 
       {/* 3. Left Sliding Sidebar Drawer */}
       <SidebarDrawer
         visible={isSidebarOpen}
-        activeChatId="chat-1"
-        agentName={agentName}
         onClose={() => setIsSidebarOpen(false)}
-        onSelectChat={(chatTitle) => {
-          setIsSidebarOpen(false);
-          router.replace('/(tabs)/chat' as any);
-        }}
-        onNewChat={() => {
-          setIsSidebarOpen(false);
-          router.replace('/(tabs)/chat' as any);
-        }}
         onOpenSettings={() => {
           setIsSidebarOpen(false);
           router.replace('/(tabs)/settings' as any);
-        }}
-        onClearSideChats={() => {
-          showToast('Side chats cleared');
         }}
       />
 
@@ -258,25 +235,25 @@ export default function TabLayout() {
         initialIcon={mascotIcon}
         initialColor={mascotColor}
         onClose={() => setIsEditAgentOpen(false)}
-        onSave={(data) => {
+        onSave={async (data) => {
+          const profile: AgentProfile = { name: data.name, subtitle: data.subtitle, icon: data.icon, color: data.color };
+          const { data: { user } } = await supabase.auth.getUser();
+          if (isSupabaseConfigured && user) {
+            const { error } = await supabase.from('profiles').update({ agent_name: profile.name, agent_role: profile.subtitle, agent_avatar: profile.icon, agent_color: profile.color }).eq('id', user.id).select('id').single();
+            if (error) throw error;
+          }
+          await AsyncStorage.setItem(`${PROFILE_KEY}:${user?.id || 'preview'}`, JSON.stringify(profile));
           setAgentName(data.name);
           setAgentSubtitle(data.subtitle);
           setMascotIcon(data.icon);
           setMascotColor(data.color);
-          const profile: AgentProfile = { name: data.name, subtitle: data.subtitle, icon: data.icon, color: data.color };
-          void AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
-          if (isSupabaseConfigured) {
-            void supabase.auth.getUser().then(({ data: { user } }) => user
-              ? supabase.from('profiles').upsert({ id: user.id, agent_name: profile.name, agent_role: profile.subtitle, agent_avatar: profile.icon, agent_color: profile.color }, { onConflict: 'id' })
-              : null).then((result) => { if (result && 'error' in result && result.error) showToast('Saved here. Cloud sync could not complete.'); });
-          }
         }}
       />
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (Colors: ColorPalette, bottom: number) => StyleSheet.create({
   accessLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.background },
   safeArea: {
     flex: 1,
@@ -284,15 +261,16 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     flex: 1,
+    minHeight: 0,
     backgroundColor: Colors.background,
   },
   tabBar: {
-    backgroundColor: Colors.background,
-    borderTopWidth: 1,
-    borderTopColor: '#F0F0F2',
-    height: Platform.OS === 'ios' ? 84 : 70,
-    paddingBottom: Platform.OS === 'ios' ? 22 : 10,
-    paddingTop: 8,
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : Colors.surface,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.border,
+    height: 64 + Math.max(bottom, 4),
+    paddingBottom: Math.max(bottom, 4),
+    paddingTop: 4,
     paddingHorizontal: 12,
     elevation: 0,
     shadowOpacity: 0,
@@ -300,16 +278,16 @@ const styles = StyleSheet.create({
   tabBarItem: {
     alignItems: 'center',
     justifyContent: 'center',
-    height: 48,
+    minHeight: 48,
   },
   iconPill: {
-    width: 58,
-    height: 42,
-    borderRadius: 21,
+    width: 44,
+    height: 24,
+    borderRadius: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },
   activeIconPill: {
-    backgroundColor: Colors.tabActiveBg, // Soft #E6E8EA capsule
+    backgroundColor: 'transparent',
   },
 });
