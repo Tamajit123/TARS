@@ -2,6 +2,8 @@
 
 The existing Supabase backend is deployed. GitHub delivery and JavaScript exports do not constitute an App Store release or a signed device build. Start with a preview release; promote after the checks below.
 
+Web preview is now deployed at https://tars-ai--preview.expo.app (immutable deployment https://tars-ai--xivadwgidr.expo.app). Both callback URLs were added and verified without removing existing redirects. See [PHONE_TESTING_AND_SIGNING.md](PHONE_TESTING_AND_SIGNING.md) for current native build preparation, the Android packaging fix, the iOS membership blocker, and exact owner signing/install/testing steps. The production commands below remain a future plan, not an executed public release.
+
 ## Preserve existing identities
 
 - Supabase: `bdswodobwesadjedzhfg`. Do not run `supabase projects create`, reset the database, relink to another project or recreate Composio auth configs.

@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase';
 import { deviceAlarmState, planDeviceAlarm, type DeviceAlarm, type DeviceAlarmDraft } from '@/lib/deviceAlarmPlan';
 
 const CHANNEL = 'tars-audible-alerts-v1';
-const SOUND = 'tars-alert.wav';
+const SOUND = 'tars_alert.wav';
 let serial: Promise<unknown> = Promise.resolve();
 const exclusive = <T,>(action: () => Promise<T>): Promise<T> => {
   const next = serial.then(action, action); serial = next.catch(() => undefined); return next;

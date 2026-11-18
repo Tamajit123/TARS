@@ -53,6 +53,8 @@
         }
       ],
       "expo-font",
+      "expo-asset",
+      "expo-system-ui",
       [
         "expo-image-picker",
         {
@@ -68,7 +70,7 @@
         "expo-notifications",
         {
           "sounds": [
-            "./assets/sounds/tars-alert.wav"
+            "./assets/sounds/tars_alert.wav"
           ],
           "color": "#0071E3"
         }
