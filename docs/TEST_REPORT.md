@@ -1,5 +1,9 @@
 # Verification reports
 
+## Preview deployment follow-up — 18 November 2026
+
+Web preview is deployed and final hosted route/bundle checks pass. Native packaging fixes pass 112 regression tests. Android is compiling on EAS; iOS phone signing is blocked by the owner's lack of Apple Developer membership. See [PREVIEW_DEPLOYMENT_2026-11-18.md](PREVIEW_DEPLOYMENT_2026-11-18.md) for actual statuses and [PHONE_TESTING_AND_SIGNING.md](PHONE_TESTING_AND_SIGNING.md) for owner steps. Physical-device delivery is not certified.
+
 ## Current release check — 18 November 2026
 
 See [actual release verification and explicit remaining gaps](RELEASE_VERIFICATION_2026-11-18.md) and [deployment plan](DEPLOYMENT_PLAN.md). All 111 automated tests and all three platform JS/static exports pass. Current live provider and multimodal checks are recorded separately from historical results and untested native-device behavior.

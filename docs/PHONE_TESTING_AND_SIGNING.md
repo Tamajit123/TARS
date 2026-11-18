@@ -5,8 +5,8 @@
 - Expo: `@tamajit123/tars-ai`, project `f9f92e27-d222-4a0f-ae50-6263521fdb27`.
 - App IDs: `app.tarsai.mobile` on both platforms; native callback `tarsai://auth/callback`.
 - Web preview: https://tars-ai--preview.expo.app
-- Immutable deployment: https://tars-ai--xivadwgidr.expo.app
-- Both hosted `/auth/callback` URLs were added and verified in the existing Supabase project. Existing callbacks and Site URL were preserved.
+- Current immutable deployment: https://tars-ai--8e8nwficyu.expo.app
+- The preview alias and immutable deployments' `/auth/callback` URLs were added and verified in the existing Supabase project. Existing callbacks and Site URL were preserved.
 - The preview environment contains only the existing public Supabase URL and anon key. Gemini and other provider secrets remain on the existing Supabase backend; no provider or account was replaced.
 
 ## Android: existing signing key
